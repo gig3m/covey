@@ -59,7 +59,7 @@ ensure_php_pool() {
   tag_installed "$ver" || { warn "PHP $(series "$ver") not installed (try: covey php install $ver)"; return 1; }
   mkdir -p "$COVEY_CONFIG/php"
   sed -e "s|@RUNTIME@|$COVEY_RUNTIME|g" -e "s|@VER@|$ver|g" \
-      "$COVEY_HOME/share/php/pool.conf.in" > "$COVEY_CONFIG/php/$ver.conf"
+      "$COVEY_SRC/share/php/pool.conf.in" > "$COVEY_CONFIG/php/$ver.conf"
   echo "COVEY_FPM_BIN=$(fpm_bin "$ver")" > "$COVEY_CONFIG/php/$ver.env"
   systemctl --user add-wants covey.target "covey-fpm@$ver.service" >/dev/null 2>&1 || true
   systemctl --user is-active --quiet "covey-fpm@$ver.service" || \
@@ -132,13 +132,21 @@ cmd_install() {
   systemctl --user add-wants covey.target covey-sync.path >/dev/null 2>&1 || true
   systemctl --user add-wants covey.target covey-services.service >/dev/null 2>&1 || true
   ensure_php_pool "$COVEY_DEFAULT_PHP" || true
+  # User services cannot bind :80/:443 unless the unprivileged port floor is
+  # lowered. Say so explicitly rather than let caddy fail to start.
+  local floor; floor="$(sysctl -n net.ipv4.ip_unprivileged_port_start 2>/dev/null || echo 1024)"
+  if [[ "$floor" -gt 80 ]]; then
+    warn "user services cannot bind port 80 yet. Run:"
+    warn "  echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-covey.conf"
+    warn "  sudo sysctl --system"
+  fi
   cmd_sync
   echo "covey installed. sites root: $COVEY_SITES"
 }
 
 cmd_sync() {
   local out="$COVEY_CONFIG/Caddyfile" tmp; tmp="$(mktemp)"
-  render "$COVEY_HOME/share/caddy/Caddyfile.in" "$tmp"
+  render "$COVEY_SRC/share/caddy/Caddyfile.in" "$tmp"
   shopt -s nullglob
   local n=0 used=() d name ver
   for d in "$COVEY_SITES"/*/; do
