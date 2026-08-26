@@ -157,6 +157,14 @@ IPC methods (via `omarchy-shell covey <method>`):
     omarchy-shell covey refresh    re-poll doctor now
     omarchy-shell covey toggle     open/close the flyout
 
+Styling follows the shell rather than Qt defaults: every `Text` binds
+`font.family` to the bar's `fontFamily` (falling back to `Style.font.family`,
+the fontconfig `monospace` alias), so `omarchy font set` and theme overrides
+apply. Sizes use `Style.font.*` tokens - `bodySmall` for rows, `caption` for
+the header and footer - and colours come from `Color.popups.*` / `Color.urgent`.
+Never bind to `Style.font.resolvedFamily`; that exists only for *displaying*
+which family is drawing.
+
 Note the widget is instantiated once per monitor, so only the first registered
 IPC handler is used and the shell logs a benign duplicate-handler warning.
 After changing the widget's IPC surface, `omarchy restart shell` - a plugin

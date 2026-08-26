@@ -26,6 +26,9 @@ BarWidget {
   function close() { popupOpen = false }
   function togglePopup() { popupOpen = !popupOpen }
 
+  // Follow the bar's font so `omarchy font set` and theme overrides apply.
+  readonly property string uiFont: bar ? bar.fontFamily : Style.font.family
+
   readonly property string coveyBin: Quickshell.env("HOME") + "/.local/share/covey/bin/covey"
   readonly property int refreshSec: settings && settings.refreshIntervalSec
     ? Number(settings.refreshIntervalSec) : 15
@@ -166,56 +169,65 @@ BarWidget {
       anchors.fill: parent
       spacing: Style.space(6)
 
-      Row {
+      Item {
         width: parent.width
-        Text {
-          text: "Sites"
-          color: Color.popups.text
-          font.pixelSize: Style.font.caption
-          font.bold: true
+        height: header.implicitHeight
+
+        PanelSectionHeader {
+          id: header
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          foreground: Color.popups.text
+          fontFamily: root.uiFont
+          text: "SITES"
         }
-        Item { width: parent.width - 120; height: 1 }
         Text {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
           text: root.phpSummary ? "php " + root.phpSummary : ""
-          color: Color.muted
+          color: Qt.darker(Color.popups.text, 1.4)
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
         }
       }
 
       PanelSeparator { width: parent.width }
 
-      // One row per site under management: state dot, name, version, state.
+      // One row per site: state dot, name, then version (healthy) or a short
+      // problem label (not). Monospace keeps the right column aligned.
       Repeater {
         model: root.sites
         Item {
           width: column.width
-          height: Style.space(20)
+          height: Style.space(22)
 
-          Text {
+          Rectangle {
             id: dot
             anchors.verticalCenter: parent.verticalCenter
-            text: modelData.ok ? "●" : "●"
-            color: modelData.ok ? Color.popups.text : Color.urgent
-            font.pixelSize: Style.font.caption
-            opacity: modelData.ok ? 0.55 : 1.0
+            width: Style.space(7)
+            height: width
+            radius: width / 2
+            color: modelData.ok ? Qt.darker(Color.popups.text, 1.6) : Color.urgent
           }
           Text {
             id: nameText
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: dot.right
-            anchors.leftMargin: Style.space(8)
+            anchors.leftMargin: Style.space(9)
             text: modelData.name
             color: Color.popups.text
-            font.pixelSize: Style.font.caption
+            font.family: root.uiFont
+            font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
-            width: Math.min(implicitWidth, parent.width * 0.42)
+            width: Math.min(implicitWidth, parent.width * 0.45)
           }
           Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             text: modelData.ok ? modelData.php : modelData.state
-            color: modelData.ok ? Color.muted : Color.urgent
-            font.pixelSize: Style.font.caption
+            color: modelData.ok ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
+            font.family: root.uiFont
+            font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
             width: Math.min(implicitWidth, parent.width * 0.5)
             horizontalAlignment: Text.AlignRight
@@ -235,9 +247,11 @@ BarWidget {
       Text {
         visible: root.sites.length === 0
         width: parent.width
-        text: root.known ? "No sites yet — mkdir ~/Covey/<name>" : "covey is not responding"
-        color: Color.muted
-        font.pixelSize: Style.font.caption
+        text: root.known ? "No sites yet \u2014 mkdir ~/Covey/<name>"
+                         : "covey is not responding"
+        color: Qt.darker(Color.popups.text, 1.4)
+        font.family: root.uiFont
+        font.pixelSize: Style.font.bodySmall
         wrapMode: Text.WordWrap
       }
 
@@ -248,9 +262,10 @@ BarWidget {
         model: root.platformIssues
         Text {
           width: column.width
-          text: "✗ " + modelData.check + (modelData.detail ? " — " + modelData.detail : "")
+          text: modelData.check + (modelData.detail ? "  " + modelData.detail : "")
           color: Color.urgent
-          font.pixelSize: Style.font.caption
+          font.family: root.uiFont
+          font.pixelSize: Style.font.bodySmall
           wrapMode: Text.WordWrap
         }
       }
@@ -262,16 +277,20 @@ BarWidget {
         height: Style.space(20)
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: root.healthy ? "All checks passed" : root.failures + " problem"
-                + (root.failures === 1 ? "" : "s")
-          color: root.healthy ? Color.muted : Color.urgent
+          text: root.healthy
+            ? "All checks passed"
+            : root.failures + (root.failures === 1 ? " problem" : " problems")
+          color: root.healthy ? Qt.darker(Color.popups.text, 1.4) : Color.urgent
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
         }
         Text {
+          id: reportLabel
           anchors.verticalCenter: parent.verticalCenter
           anchors.right: parent.right
-          text: "Full report →"
+          text: "Full report \u2192"
           color: Color.popups.text
+          font.family: root.uiFont
           font.pixelSize: Style.font.caption
         }
         MouseArea {
