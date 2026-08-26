@@ -6,6 +6,12 @@ served at `https://<name>.localhost`. See `README.md` for user docs and
 
 **This file is about working ON covey.** The skill is about USING it.
 
+For *why* these decisions were made — including the approaches that were
+rejected (Valet Linux Plus, DDEV, mise-php, containerised FPM) and what they
+cost — read [`docs/DESIGN.md`](docs/DESIGN.md). Read it before proposing an
+architectural change; the alternatives look attractive again every time you
+forget why they were turned down.
+
 ## The charter (settled, do not drift)
 
 covey manages **the platform**. It never modifies files inside a project.

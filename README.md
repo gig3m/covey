@@ -303,6 +303,14 @@ Issues and pull requests welcome.
 Resolution and checks live in `core.php` specifically so the CLI and the doctor
 cannot drift into two different views of the same site. Keep it that way.
 
+Two documents worth reading before changing anything:
+
+- [`CLAUDE.md`](CLAUDE.md) — the scope charter, architecture invariants, and
+  the hard-won facts (why wildcard `*.localhost` certs cannot work, why
+  `caddy trust` is not enough, why Arch's PHP has no `pdo_mysql`).
+- [`docs/DESIGN.md`](docs/DESIGN.md) — why covey is shaped this way, and which
+  alternatives were rejected and at what cost.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
