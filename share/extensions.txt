@@ -6,6 +6,8 @@ mysqli
 pdo_mysql
 sqlite3
 pdo_sqlite
+pdo_pgsql
+pgsql
 gd
 sodium
 igbinary

@@ -39,6 +39,9 @@ user - do not expect covey to fix it, and do not use covey commands to try.
 ## How serving works
 
 - A directory `~/Covey/foo` is served at `https://foo.localhost`.
+- Dotted names work: `~/Covey/example.com` is served at
+  `https://example.com.localhost` (multi-label names under `.localhost`
+  resolve to loopback like any other).
 - If `foo/public/index.php` exists, the document root is `foo/public`
   (framework layout). Otherwise it is `foo` itself.
 - Site config is **generated**: `covey sync` writes one Caddy block per site.
@@ -88,7 +91,7 @@ has no `pdo_mysql`, so a Laravel app cannot reach MySQL at all.
 packages and writes a managed `conf.d/covey.ini` enabling:
 
     iconv bcmath exif intl mysqli pdo_mysql sqlite3 pdo_sqlite
-    gd sodium igbinary redis
+    pdo_pgsql pgsql gd sodium igbinary redis
 
 `sqlite3`/`pdo_sqlite` matter because Laravel 11+ defaults to SQLite, and
 `iconv` because common packages require it; Arch ships neither enabled.
@@ -117,6 +120,7 @@ edits:
 | Service | Host / port          | Credentials        |
 |---------|----------------------|--------------------|
 | MySQL   | `127.0.0.1:3306`     | user `root`, empty password |
+| Postgres| `127.0.0.1:5432`     | user `root`, empty password |
 | Redis   | `127.0.0.1:6379`     | no auth            |
 | Mailpit | SMTP `127.0.0.1:1025`, UI <http://127.0.0.1:8025> | none |
 

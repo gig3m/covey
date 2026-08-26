@@ -18,6 +18,23 @@ services:
       timeout: 5s
       retries: 12
 
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:5432:5432"]
+    environment:
+      # trust auth so Laravel's stock pgsql defaults (root / empty password) work,
+      # exactly as the mysql service does. Loopback-only.
+      POSTGRES_USER: root
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes: ["covey-postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -41,5 +58,6 @@ services:
 
 volumes:
   covey-mysql:
+  covey-postgres:
   covey-redis:
   covey-mailpit:

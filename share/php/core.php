@@ -144,7 +144,8 @@ function sites(): array {
     $out = [];
     foreach (glob("$SITES/*", GLOB_ONLYDIR) ?: [] as $dir) {
         $n = basename($dir);
-        if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/', $n)) continue;
+        // Dotted names allowed: kylearrington.com -> kylearrington.com.localhost
+        if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/', $n)) continue;
         $out[$n] = $dir;
     }
     return $out;
@@ -222,7 +223,7 @@ function platform_checks(): array {
         return $c;
     }
     $c[] = chk('docker', OK);
-    foreach ([['mysql',3306],['redis',6379],['mailpit',1025]] as [$svc,$port]) {
+    foreach ([['mysql',3306],['postgres',5432],['redis',6379],['mailpit',1025]] as [$svc,$port]) {
         $c[] = port_open('127.0.0.1', $port)
             ? chk($svc, OK, ['detail'=>"127.0.0.1:$port"])
             : chk($svc, false, ['problem'=>'service_down',

@@ -14,7 +14,7 @@ COVEY_COMPOSE="$COVEY_HOME/share/compose/covey.yaml"
 
 PROVIDERS_TSV="$COVEY_SRC/share/providers.tsv"
 EXTENSIONS_TXT="$COVEY_SRC/share/extensions.txt"
-COVEY_EXT_PKGS="gd sodium igbinary redis sqlite"
+COVEY_EXT_PKGS="gd sodium igbinary redis sqlite pgsql"
 
 die()  { echo "covey: $*" >&2; exit 1; }
 warn() { echo "covey: $*" >&2; }
@@ -151,7 +151,9 @@ cmd_sync() {
   local n=0 used=() d name ver
   for d in "$COVEY_SITES"/*/; do
     d="${d%/}"; name="$(basename "$d")"
-    [[ "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || continue
+    # Dotted names are allowed: `kylearrington.com` -> kylearrington.com.localhost,
+    # which resolves like any other name under .localhost.
+    [[ "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || continue
     ver="$(site_php_tag "$d")"
     used+=("$ver")
     printf '\n%s.localhost {\n\timport covey_site %s %s/covey/php%s.sock\n}\n' \

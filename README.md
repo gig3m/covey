@@ -180,13 +180,14 @@ reports anything missing.
 
 ## Services
 
-MySQL (MariaDB), Redis and Mailpit run as one Docker Compose stack, bound to
-loopback only. Credentials are chosen so a **stock Laravel `.env` works
+MySQL (MariaDB), PostgreSQL, Redis and Mailpit run as one Docker Compose stack,
+bound to loopback only. Credentials are chosen so a **stock Laravel `.env` works
 unchanged**:
 
 | Service | Address | Credentials |
 |---|---|---|
 | MySQL | `127.0.0.1:3306` | `root`, empty password |
+| PostgreSQL | `127.0.0.1:5432` | `root`, empty password (trust auth) |
 | Redis | `127.0.0.1:6379` | none |
 | Mailpit | SMTP `127.0.0.1:1025`, UI <http://127.0.0.1:8025> | none |
 
