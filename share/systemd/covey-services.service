@@ -1,0 +1,13 @@
+[Unit]
+Description=Covey services (MySQL, Redis, Mailpit)
+PartOf=covey.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml up -d --wait
+ExecStop=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml stop
+TimeoutStartSec=300
+
+[Install]
+WantedBy=covey.target

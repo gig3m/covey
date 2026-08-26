@@ -31,13 +31,26 @@ already satisfies the constraint it wins, so most sites share one pool.
 
 Each version runs its own FPM pool, started on demand when a site needs it.
 
+## PHP extensions
+
+Arch enables almost no PHP extensions by default - notably not `pdo_mysql` -
+so `covey php configure <tag>` installs the extension packages and writes a
+managed `conf.d/covey.ini` enabling the set a Laravel app expects.
+
+## Services
+
+MySQL, Redis and Mailpit run as one Docker Compose stack under
+`covey-services.service`, bound to loopback and configured so a stock Laravel
+`.env` works unchanged (`127.0.0.1`, root, empty password, default ports).
+Mailpit's UI is at <http://127.0.0.1:8025>.
+
 ## Status
 
-Stages 1-2 complete: serving, framework-layout detection, automatic TLS,
-zero-touch site creation, the agent skill, and per-site PHP version routing.
+Stages 1-3 complete: serving, framework-layout detection, automatic TLS,
+zero-touch site creation, the agent skill, per-site PHP version routing, and
+the MySQL/Redis/Mailpit service stack.
 
-Not yet built: MySQL/Redis/Mailpit services, the `covey doctor` check layer,
-and the bar module.
+Not yet built: the `covey doctor` check layer and the bar module.
 
 ## Install
 

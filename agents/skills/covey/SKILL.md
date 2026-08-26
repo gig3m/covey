@@ -29,7 +29,9 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey reload             reload the web server config
     covey status             show unit state
     covey sites              list sites, their PHP version and URLs
-    covey php [list|install] show or install PHP providers
+    covey php [list|install <tag>|configure <tag>]
+    covey services [up|down|status|logs]
+    covey db [list|create <name>|drop <name>|shell]
     covey logs [caddy|php]   tail logs
 
 ## How serving works
@@ -73,6 +75,47 @@ default rather than refusing to serve. The warning names the site. When sync
 runs from the path unit these warnings go to the journal:
 `journalctl --user -u covey-sync.service`.
 
+## PHP extensions
+
+Arch ships most PHP extensions as `.so` files but **enables almost none of
+them**, and the extension packages (`php-redis`, `php-igbinary`) ship their
+`.ini` with the `extension=` line commented out. A stock Arch PHP therefore
+has no `pdo_mysql`, so a Laravel app cannot reach MySQL at all.
+
+`covey php configure <tag>` fixes this per provider: it installs the extension
+packages and writes a managed `conf.d/covey.ini` enabling:
+
+    bcmath exif intl mysqli pdo_mysql gd sodium igbinary redis
+
+`igbinary` must load before `redis`; covey's single managed file guarantees
+that ordering. The file lives at `/etc/php/conf.d/covey.ini` (8.5) or
+`/etc/php-legacy/conf.d/covey.ini` (8.3) and needs root to write, so
+`configure` uses sudo. It is **not** run automatically.
+
+If a site reports "could not find driver" or PDO errors, this is almost
+certainly the cause: run `covey php configure <tag>` for the version that
+site resolves to.
+
+## Services
+
+MySQL (MariaDB), Redis and Mailpit run as a Docker Compose stack managed by
+`covey-services.service`. Everything binds to **loopback only**.
+
+Credentials are deliberately chosen so a stock Laravel `.env` works with no
+edits:
+
+| Service | Host / port          | Credentials        |
+|---------|----------------------|--------------------|
+| MySQL   | `127.0.0.1:3306`     | user `root`, empty password |
+| Redis   | `127.0.0.1:6379`     | no auth            |
+| Mailpit | SMTP `127.0.0.1:1025`, UI <http://127.0.0.1:8025> | none |
+
+Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
+`MAIL_MAILER=smtp`, `MAIL_HOST=127.0.0.1`, `MAIL_PORT=1025`.
+
+Databases are **not** created automatically - creating one is an explicit
+action: `covey db create <name>`.
+
 ## Architecture
 
 Everything runs as **user** systemd units grouped under `covey.target`:
@@ -81,6 +124,7 @@ Everything runs as **user** systemd units grouped under `covey.target`:
       covey-caddy.service     web server (Caddy)
       covey-fpm@<ver>.service PHP-FPM pool, one instance per PHP version
       covey-sync.path         watches ~/Covey, triggers covey-sync.service
+    covey-services.service  docker compose stack (mysql, redis, mailpit)
 
 Running as the user (not `http`) is deliberate: the FPM pool reads `~/Covey`
 with no ACL or permission workarounds.
@@ -95,6 +139,9 @@ Check unit state first: `covey status`, then `covey logs caddy`.
   `public/index.php`; docroot selection depends on it.
 - **New directory not served**: confirm `covey-sync.path` is active, or run
   `covey sync` manually. Names that are not valid DNS labels are skipped.
+- **Database connection refused**: check `covey services status`; the stack may
+  be down or still starting. MySQL has a healthcheck, so `covey services up`
+  waits for it to be ready.
 - **Site is on the wrong PHP version**: run `covey sites` to see what it
   resolved to, and `covey php list` to see what is installed. Edits to
   `.covey` or `composer.json` need a manual `covey sync`.

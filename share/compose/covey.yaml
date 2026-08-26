@@ -1,0 +1,45 @@
+# Covey services. Credentials are chosen so a stock Laravel .env works
+# unchanged: 127.0.0.1, root, empty password, default ports.
+# Everything binds to loopback only.
+name: covey
+
+services:
+  mysql:
+    image: mariadb:11
+    restart: unless-stopped
+    ports: ["127.0.0.1:3306:3306"]
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "yes"
+      MARIADB_ROOT_HOST: "%"
+    volumes: ["covey-mysql:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: ["covey-redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI
+    environment:
+      MP_MAX_MESSAGES: "5000"
+    volumes: ["covey-mailpit:/data"]
+
+volumes:
+  covey-mysql:
+  covey-redis:
+  covey-mailpit:
