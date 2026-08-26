@@ -1,8 +1,11 @@
+iconv
 bcmath
 exif
 intl
 mysqli
 pdo_mysql
+sqlite3
+pdo_sqlite
 gd
 sodium
 igbinary

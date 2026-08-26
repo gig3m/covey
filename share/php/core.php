@@ -252,6 +252,35 @@ function db_exists(string $name): ?bool {
     return $n > 0;
 }
 
+// Ask composer what the project's own dependencies need from the platform.
+// This catches extensions covey does not ship - the class of problem covey's
+// own fixed extension list cannot see.
+function platform_reqs_check(string $dir, string $tag): ?array {
+    if (!is_file("$dir/composer.lock") || !is_file('/usr/bin/composer')) return null;
+    $p = provider($tag);
+    if (!$p || !is_executable($p['php'])) return null;
+    $cmd = escapeshellarg($p['php']) . ' /usr/bin/composer check-platform-reqs --no-interaction '
+         . '-d ' . escapeshellarg($dir) . ' 2>/dev/null';
+    $out = (string)@shell_exec($cmd);
+    if (trim($out) === '') return null;
+    $missing = [];
+    foreach (explode("\n", $out) as $line) {
+        if (stripos($line, 'missing') === false) continue;
+        if (preg_match('/^\s*ext-([A-Za-z0-9_]+)/', $line, $m)) $missing[] = $m[1];
+    }
+    $missing = array_values(array_unique($missing));
+    if (!$missing) return chk('platform-reqs', OK, ['detail'=>'composer requirements satisfied']);
+
+    // If covey already manages every missing extension, configure fixes it.
+    $known = array_map('strtolower', covey_extensions());
+    $unmanaged = array_values(array_diff(array_map('strtolower', $missing), $known));
+    $extra = ['problem'=>'platform_reqs_missing', 'detail'=>implode(' ', array_map(fn($e)=>"ext-$e", $missing))];
+    if (!$unmanaged) $extra['fix'] = fix("covey php configure $tag", true);
+    else $extra['hint'] = 'not in covey\'s extension set: ' . implode(' ', $unmanaged)
+                        . ' - add to share/extensions.txt (and a package to COVEY_EXT_PKGS if needed)';
+    return chk('platform-reqs', false, $extra);
+}
+
 function site_report(string $name, string $dir): array {
     $r = resolve_site($dir);
     $p = provider($r['tag']);
@@ -275,6 +304,9 @@ function site_report(string $name, string $dir): array {
     } else {
         $checks[] = chk('php', OK, ['detail'=>tag_version($r['tag']) . " (from {$r['source']})"]);
     }
+
+    $pr = platform_reqs_check($dir, $r['tag']);
+    if ($pr !== null) $checks[] = $pr;
 
     $checks[] = http_check($name);
 

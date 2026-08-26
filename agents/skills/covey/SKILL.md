@@ -86,7 +86,15 @@ has no `pdo_mysql`, so a Laravel app cannot reach MySQL at all.
 `covey php configure <tag>` fixes this per provider: it installs the extension
 packages and writes a managed `conf.d/covey.ini` enabling:
 
-    bcmath exif intl mysqli pdo_mysql gd sodium igbinary redis
+    iconv bcmath exif intl mysqli pdo_mysql sqlite3 pdo_sqlite
+    gd sodium igbinary redis
+
+`sqlite3`/`pdo_sqlite` matter because Laravel 11+ defaults to SQLite, and
+`iconv` because common packages require it; Arch ships neither enabled.
+
+Beyond this fixed set, `covey doctor` also runs `composer check-platform-reqs`
+per site, so an extension a *project* needs but covey does not ship is
+reported as `platform_reqs_missing` rather than silently 500-ing.
 
 `igbinary` must load before `redis`; covey's single managed file guarantees
 that ordering. The file lives at `/etc/php/conf.d/covey.ini` (8.5) or

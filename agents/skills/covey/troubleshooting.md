@@ -51,6 +51,7 @@ changed something and need current truth.
 | `http_failed` | Request to the site failed | `covey logs caddy` |
 | `http_5xx` | Site returned 5xx - usually an application error | `covey logs php` |
 | `database_missing` | `.covey` declares a database that does not exist | `covey db create <name>` |
+| `platform_reqs_missing` | The project's own dependencies need an extension that is not loaded | `covey php configure <tag>` if covey manages it; otherwise a `hint` naming the extension |
 
 ## Things that are not covey's problem
 
@@ -63,6 +64,9 @@ Report these to the user; do not expect a covey command to fix them.
 
 **A brand-new site's first request fails TLS, then works.** Normal - the
 certificate is issued on the first handshake. Retry once.
+
+**`Vite manifest not found`.** Assets are not built. App-level, not covey:
+run `npm install && npm run build` in the project.
 
 **`could not find driver` / PDO errors.** The provider that site resolves to
 has no `pdo_mysql`. Run `covey php configure <tag>` for that tag - note it may
