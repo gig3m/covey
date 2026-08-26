@@ -117,6 +117,21 @@ Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
 Databases are **not** created automatically - creating one is an explicit
 action: `covey db create <name>`.
 
+## Bar module
+
+covey ships an omarchy-shell bar widget (`share/omarchy/covey/`), symlinked
+into `~/.config/omarchy/plugins/covey` by `covey install`. Enable it with
+`omarchy plugin enable covey`.
+
+It polls `covey doctor --json --cached` and shows one icon: normal while every
+check passes, `Color.urgent` when any fails. The tooltip lists each failing
+check with its fix command; clicking opens `covey doctor` in a floating
+terminal. It is a **renderer over the same JSON model** the CLI and agents
+read - not a second source of truth.
+
+Refresh interval is configurable in the widget's settings (default 15s).
+Because results are cached, polling is cheap.
+
 ## Architecture
 
 Everything runs as **user** systemd units grouped under `covey.target`:

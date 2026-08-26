@@ -123,6 +123,10 @@ cmd_install() {
     ln -sfn "$COVEY_HOME/share/systemd/$u" "$UNIT_DIR/$u"
   done
   ln -sfn "$COVEY_HOME/agents/skills/covey" "$HOME/.claude/skills/covey"
+  # omarchy-shell bar plugin (hot-reloads on save)
+  if [[ -d "$HOME/.config/omarchy/plugins" ]]; then
+    ln -sfn "$COVEY_HOME/share/omarchy/covey" "$HOME/.config/omarchy/plugins/covey"
+  fi
   systemctl --user daemon-reload
   systemctl --user add-wants covey.target covey-caddy.service >/dev/null 2>&1 || true
   systemctl --user add-wants covey.target covey-sync.path >/dev/null 2>&1 || true

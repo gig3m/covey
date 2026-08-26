@@ -44,13 +44,23 @@ MySQL, Redis and Mailpit run as one Docker Compose stack under
 `.env` works unchanged (`127.0.0.1`, root, empty password, default ports).
 Mailpit's UI is at <http://127.0.0.1:8025>.
 
+## Doctor and the bar
+
+`covey doctor` checks the platform and every site; `--json` emits the same
+model for agents, and `--cached` serves a recent result for polling. Every
+failure carries a stable `problem` code and either a runnable `fix.cmd` or a
+`hint` when nothing can fix it automatically.
+
+The omarchy-shell bar widget renders that same model: one icon, red when any
+check fails, tooltip listing each problem and its fix, click for the full
+report.
+
 ## Status
 
-Stages 1-3 complete: serving, framework-layout detection, automatic TLS,
-zero-touch site creation, the agent skill, per-site PHP version routing, and
-the MySQL/Redis/Mailpit service stack.
-
-Not yet built: the `covey doctor` check layer and the bar module.
+Stages 1-5 complete: serving, framework-layout detection, automatic TLS,
+zero-touch site creation, the agent skill, per-site PHP version routing, the
+MySQL/Redis/Mailpit service stack, the `covey doctor` check layer, and the
+omarchy-shell bar module.
 
 ## Install
 
