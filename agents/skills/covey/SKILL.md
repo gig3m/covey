@@ -133,10 +133,34 @@ into `~/.config/omarchy/plugins/covey` by `covey install`. Enable it with
 `omarchy plugin enable covey`.
 
 It polls `covey doctor --json --cached` and shows one icon: normal while every
-check passes, `Color.urgent` when any fails. The tooltip lists each failing
-check with its fix command; clicking opens `covey doctor` in a floating
-terminal. It is a **renderer over the same JSON model** the CLI and agents
-read - not a second source of truth.
+check passes, `Color.urgent` when any fails. Hovering shows a one-line summary.
+
+**Clicking opens a flyout** listing every site under management:
+
+    Sites                          php 8.5, 8.3
+    ● southsidechurch                       8.5
+    ● stack                                 8.5
+    ● needsdb                       no database
+    All checks passed              Full report →
+
+A healthy site shows its PHP version; a failing one shows a short state label
+in `Color.urgent`, derived from the check's stable `problem` code (the flyout
+wants a state, not a sentence - full detail is in `covey doctor`). Clicking a site opens it in the browser; "Full report" opens
+`covey doctor` in a floating terminal. Platform-level failures (which belong to
+no single site) are listed below the sites.
+
+It is a **renderer over the same JSON model** the CLI and agents read - not a
+second source of truth.
+
+IPC methods (via `omarchy-shell covey <method>`):
+
+    omarchy-shell covey refresh    re-poll doctor now
+    omarchy-shell covey toggle     open/close the flyout
+
+Note the widget is instantiated once per monitor, so only the first registered
+IPC handler is used and the shell logs a benign duplicate-handler warning.
+After changing the widget's IPC surface, `omarchy restart shell` - a plugin
+rescan alone may keep the stale handler.
 
 Refresh interval is configurable in the widget's settings (default 15s).
 Because results are cached, polling is cheap.

@@ -248,9 +248,19 @@ links it; enable it with:
 omarchy plugin enable covey
 ```
 
-One icon: normal while every check passes, red when any fails. The tooltip
-lists each failing check with its fix; clicking opens the full report. It is a
-**renderer over `covey doctor --json`**, not a second source of truth.
+One icon: normal while every check passes, red when any fails. Clicking opens a
+flyout listing every site under management with its state — PHP version when
+healthy, a short problem label when not. Clicking a site opens it in the browser.
+
+```
+Sites                          php 8.5, 8.3
+● southsidechurch                       8.5
+● stack                                 8.5
+● needsdb                       no database
+All checks passed              Full report →
+```
+
+It is a **renderer over `covey doctor --json`**, not a second source of truth.
 
 ## Agents
 
