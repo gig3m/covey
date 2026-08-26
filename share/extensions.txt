@@ -1,0 +1,9 @@
+bcmath
+exif
+intl
+mysqli
+pdo_mysql
+gd
+sodium
+igbinary
+redis

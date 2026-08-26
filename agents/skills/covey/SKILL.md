@@ -28,6 +28,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey sync               regenerate site config from ~/Covey, then reload
     covey reload             reload the web server config
     covey status             show unit state
+    covey doctor [--json]    check the platform and every site
     covey sites              list sites, their PHP version and URLs
     covey php [list|install <tag>|configure <tag>]
     covey services [up|down|status|logs]
@@ -129,9 +130,20 @@ Everything runs as **user** systemd units grouped under `covey.target`:
 Running as the user (not `http`) is deliberate: the FPM pool reads `~/Covey`
 with no ACL or permission workarounds.
 
+## Topic guides
+
+- [`troubleshooting.md`](troubleshooting.md) - `covey doctor`, the JSON check
+  contract, and every `problem` code with its fix. **Read this before
+  diagnosing any covey problem.**
+
 ## Troubleshooting
 
-Check unit state first: `covey status`, then `covey logs caddy`.
+Run `covey doctor` first - it checks the platform and every site and prints
+the fix for anything broken. `covey doctor --json` gives the same result as
+structured data (exit 0 = all passed, 1 = something failed); see
+[`troubleshooting.md`](troubleshooting.md) for the schema and problem codes.
+
+Then `covey status` and `covey logs caddy`.
 
 - **First request to a brand-new site fails TLS**, then succeeds: normal.
   The certificate is issued on first handshake (~1s). Retry.

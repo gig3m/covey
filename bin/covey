@@ -3,6 +3,7 @@
 # Manages the platform (web server, PHP, services); never touches your project files.
 set -euo pipefail
 
+COVEY_SRC="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 COVEY_HOME="${COVEY_HOME:-$HOME/.local/share/covey}"
 COVEY_CONFIG="${COVEY_CONFIG:-$HOME/.config/covey}"
 COVEY_SITES="${COVEY_SITES:-$HOME/Covey}"
@@ -11,30 +12,21 @@ COVEY_DEFAULT_PHP="${COVEY_DEFAULT_PHP:-85}"
 UNIT_DIR="$HOME/.config/systemd/user"
 COVEY_COMPOSE="$COVEY_HOME/share/compose/covey.yaml"
 
-# tag | series | php cli | php-fpm | pacman packages | config dir | package prefix
-# Only verified providers are listed; adding a row is all a new version needs.
-PROVIDERS="
-85|8.5|/usr/bin/php|/usr/bin/php-fpm|php php-fpm|/etc/php|php
-83|8.3|/usr/bin/php-legacy|/usr/bin/php-fpm-legacy|php-legacy php-legacy-fpm|/etc/php-legacy|php-legacy
-"
-
-# Extensions covey turns on. Arch ships these as .so but enables almost none,
-# so a stock Laravel app cannot reach MySQL out of the box.
-# Order matters: igbinary must load before redis.
-COVEY_EXTENSIONS="bcmath exif intl mysqli pdo_mysql gd sodium igbinary redis"
+PROVIDERS_TSV="$COVEY_SRC/share/providers.tsv"
+EXTENSIONS_TXT="$COVEY_SRC/share/extensions.txt"
 COVEY_EXT_PKGS="gd sodium igbinary redis"
 
 die()  { echo "covey: $*" >&2; exit 1; }
 warn() { echo "covey: $*" >&2; }
 
-pfield()   { echo "$PROVIDERS" | awk -F'|' -v v="$1" '$1==v {print $'"$2"'; exit}'; }
+pfield()   { awk -F'\t' -v v="$1" '!/^#/ && $1==v {print $'"$2"'; exit}' "$PROVIDERS_TSV"; }
 series()   { pfield "$1" 2; }
 php_bin()  { pfield "$1" 3; }
 fpm_bin()  { pfield "$1" 4; }
 php_pkgs() { pfield "$1" 5; }
 conf_dir()  { pfield "$1" 6; }
 pkg_prefix(){ pfield "$1" 7; }
-all_tags() { echo "$PROVIDERS" | awk -F'|' 'NF>1 {print $1}'; }
+all_tags() { awk -F'\t' '!/^#/ && NF>1 {print $1}' "$PROVIDERS_TSV"; }
 tag_installed() { [[ -x "$(php_bin "$1")" && -x "$(fpm_bin "$1")" ]]; }
 
 # Full version of an installed provider (e.g. 8.3.33); falls back to its series.
@@ -56,57 +48,10 @@ tag_for_version() {  # 8.3.33 -> 83
 }
 
 # --- version resolution -----------------------------------------------------
-# Order: .covey  ->  composer.json require.php  ->  default.
-# Policy: if the default satisfies the constraint, keep the default (fewer pools).
-
-covey_file_php() {  # read `php = 8.3` from a site's .covey
-  local f="$1/.covey"
-  [[ -f "$f" ]] || return 1
-  local v; v="$(sed -nE 's/^[[:space:]]*php[[:space:]]*=[[:space:]]*"?([0-9]+\.[0-9]+)"?.*/\1/p' "$f" | head -1)"
-  [[ -n "$v" ]] && { echo "$v"; return 0; }
-  return 1
-}
-
-composer_php() {  # read require.php from composer.json using php itself
-  local f="$1/composer.json" bin
-  [[ -f "$f" ]] || return 1
-  bin="$(php_bin "$COVEY_DEFAULT_PHP")"; [[ -x "$bin" ]] || return 1
-  local c; c="$("$bin" -r '
-    $j = json_decode(@file_get_contents($argv[1]), true);
-    echo is_array($j) ? ($j["require"]["php"] ?? "") : "";
-  ' "$f" 2>/dev/null)"
-  [[ -n "$c" ]] && { echo "$c"; return 0; }
-  return 1
-}
-
-site_php_tag() {
-  local dir="$1" want tag
-  # 1. explicit pin
-  if want="$(covey_file_php "$dir")"; then
-    if tag="$(tag_for_series "$want")" && tag_installed "$tag"; then echo "$tag"; return 0; fi
-    warn "$(basename "$dir"): .covey pins php $want but no installed provider matches; using default"
-    echo "$COVEY_DEFAULT_PHP"; return 0
-  fi
-  # 2. composer constraint
-  local constraint
-  if constraint="$(composer_php "$dir")"; then
-    local def_ver; def_ver="$(tag_version "$COVEY_DEFAULT_PHP")"
-    if php_satisfies "$constraint" "$def_ver"; then echo "$COVEY_DEFAULT_PHP"; return 0; fi
-    local installed=() t
-    for t in $(all_tags); do tag_installed "$t" && installed+=("$(tag_version "$t")"); done
-    local best
-    if best="$(php_run "$COVEY_HOME/share/php/resolve.php" "$constraint" "${installed[@]}")" \
-       && [[ -n "$best" ]] && tag="$(tag_for_version "$best")"; then
-      echo "$tag"; return 0
-    fi
-    warn "$(basename "$dir"): no installed PHP satisfies '$constraint'; using default"
-  fi
-  # 3. default
-  echo "$COVEY_DEFAULT_PHP"
-}
-
-php_run() { local b; b="$(php_bin "$COVEY_DEFAULT_PHP")"; [[ -x "$b" ]] || return 1; "$b" "$@"; }
-php_satisfies() { php_run "$COVEY_HOME/share/php/resolve.php" "$1" "$2" >/dev/null 2>&1; }
+# Delegated to core.php so `sync` and `doctor` always agree.
+core() { COVEY_HOME="$COVEY_SRC" COVEY_SITES="$COVEY_SITES" COVEY_DEFAULT_PHP="$COVEY_DEFAULT_PHP" \
+         "$(php_bin "$COVEY_DEFAULT_PHP")" "$COVEY_SRC/share/php/core.php" "$@"; }
+site_php_tag() { core resolve "$1" 2>/dev/null || echo "$COVEY_DEFAULT_PHP"; }
 
 # --- pools ------------------------------------------------------------------
 ensure_php_pool() {
@@ -170,7 +115,7 @@ cmd_db() {
 
 # --- commands ---------------------------------------------------------------
 cmd_install() {
-  local src; src="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+  local src="$COVEY_SRC"
   mkdir -p "$COVEY_CONFIG/php" "$COVEY_SITES" "$UNIT_DIR" "$HOME/.claude/skills"
   [[ -e "$COVEY_HOME" && ! -L "$COVEY_HOME" ]] && die "$COVEY_HOME exists and is not a symlink"
   ln -sfn "$src" "$COVEY_HOME"
@@ -255,16 +200,14 @@ cmd_php_configure() {
   {
     echo "; Managed by covey - enables the extension set a Laravel app expects."
     echo "; Arch ships these modules but leaves them off by default."
-    for e in $COVEY_EXTENSIONS; do
-      echo "extension=$e"
-    done
+    while read -r e; do [[ -n "$e" ]] && echo "extension=$e"; done < "$EXTENSIONS_TXT"
   } > "$tmp"
   sudo install -Dm644 "$tmp" "$ini"; rm -f "$tmp"
   echo "wrote $ini"
   systemctl --user is-active --quiet "covey-fpm@$t.service" && \
     systemctl --user restart "covey-fpm@$t.service" || true
   local missing=() m
-  for m in $COVEY_EXTENSIONS; do
+  for m in $(cat "$EXTENSIONS_TXT"); do
     "$(php_bin "$t")" -m 2>/dev/null | grep -qix "$m" || missing+=("$m")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
@@ -273,6 +216,8 @@ cmd_php_configure() {
     echo "PHP $(series "$t"): all covey extensions loaded"
   fi
 }
+
+cmd_doctor() { core doctor "$@"; }
 
 cmd_start()   { systemctl --user start covey.target; cmd_status; }
 cmd_stop()    { systemctl --user stop covey.target covey-caddy.service 'covey-fpm@*.service' || true; }
@@ -323,6 +268,7 @@ covey - local PHP development environment
   covey sync                 regenerate site config from $COVEY_SITES, reload
   covey reload               reload the web server config
   covey status               show unit state
+  covey doctor [--json]      check the platform and every site
   covey sites                list sites, their PHP version and URLs
   covey php [list|install T|configure T]  PHP providers and extensions
   covey services [up|down|status|logs]
@@ -343,6 +289,7 @@ case "${1:-}" in
   sync)    shift; cmd_sync "$@" ;;
   php)     shift; cmd_php "$@" ;;
   status)  shift; cmd_status "$@" ;;
+  doctor)  shift; cmd_doctor "$@" ;;
   sites)   shift; cmd_sites "$@" ;;
   services) shift; cmd_services "$@" ;;
   db)      shift; cmd_db "$@" ;;
