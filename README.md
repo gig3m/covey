@@ -23,13 +23,21 @@ trusted TLS. No per-project configuration, no `park`/`link` step.
 - **Platform only** - covey manages the web server, PHP, and local services.
   It never modifies files inside a project.
 
+## PHP versions
+
+A site's PHP version resolves from `.covey` (`php = 8.3`), else the
+`composer.json` `require.php` constraint, else the default. If the default
+already satisfies the constraint it wins, so most sites share one pool.
+
+Each version runs its own FPM pool, started on demand when a site needs it.
+
 ## Status
 
-Stage 1 complete: serving, framework-layout detection, automatic TLS,
-zero-touch site creation, and the agent skill.
+Stages 1-2 complete: serving, framework-layout detection, automatic TLS,
+zero-touch site creation, the agent skill, and per-site PHP version routing.
 
-Not yet built: per-site PHP version routing, MySQL/Redis/Mailpit services,
-the `covey doctor` check layer, and the bar module.
+Not yet built: MySQL/Redis/Mailpit services, the `covey doctor` check layer,
+and the bar module.
 
 ## Install
 

@@ -28,7 +28,8 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey sync               regenerate site config from ~/Covey, then reload
     covey reload             reload the web server config
     covey status             show unit state
-    covey sites              list sites and their URLs
+    covey sites              list sites, their PHP version and URLs
+    covey php [list|install] show or install PHP providers
     covey logs [caddy|php]   tail logs
 
 ## How serving works
@@ -42,6 +43,35 @@ user - do not expect covey to fix it, and do not use covey commands to try.
 - Each site gets its own single-name certificate. A wildcard `*.localhost`
   cert cannot be used: TLS clients reject a wildcard with only one label
   after it.
+
+## PHP version selection
+
+Each site resolves to a PHP version, in this order:
+
+1. **`.covey` in the site directory** - an explicit pin: `php = 8.3`
+2. **`composer.json` `require.php`** - the constraint is resolved against the
+   installed providers (`^`, `~`, `>=`, `X.Y.*` and `||` are supported)
+3. **The default** (currently 8.5)
+
+Policy: if the default version already satisfies the constraint, the default is
+kept, so most sites share one pool. `.covey` is the escape hatch for "this
+project must stay on 8.3 even though composer would allow newer".
+
+Only providers listed in the `PROVIDERS` table in `bin/covey` can be selected.
+Installed providers today: 8.5 (`php`), 8.3 (`php-legacy`). Install another
+with `covey php install <tag>`.
+
+Each version gets its own FPM pool (`covey-fpm@85`, `covey-fpm@83`), started
+automatically when some site resolves to it.
+
+**Changing `.covey` or `composer.json` requires `covey sync`.** The path unit
+watches only the top level of `~/Covey`, so it catches new and removed sites
+but not edits inside one.
+
+If no installed PHP satisfies a constraint, covey warns and falls back to the
+default rather than refusing to serve. The warning names the site. When sync
+runs from the path unit these warnings go to the journal:
+`journalctl --user -u covey-sync.service`.
 
 ## Architecture
 
@@ -65,3 +95,6 @@ Check unit state first: `covey status`, then `covey logs caddy`.
   `public/index.php`; docroot selection depends on it.
 - **New directory not served**: confirm `covey-sync.path` is active, or run
   `covey sync` manually. Names that are not valid DNS labels are skipped.
+- **Site is on the wrong PHP version**: run `covey sites` to see what it
+  resolved to, and `covey php list` to see what is installed. Edits to
+  `.covey` or `composer.json` need a manual `covey sync`.
