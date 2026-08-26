@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# covey - a local PHP development environment for Linux.
+# Manages the platform (web server, PHP, services); never touches your project files.
+set -euo pipefail
+
+COVEY_HOME="${COVEY_HOME:-$HOME/.local/share/covey}"
+COVEY_CONFIG="${COVEY_CONFIG:-$HOME/.config/covey}"
+COVEY_SITES="${COVEY_SITES:-$HOME/Covey}"
+COVEY_RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+COVEY_DEFAULT_PHP="${COVEY_DEFAULT_PHP:-85}"
+UNIT_DIR="$HOME/.config/systemd/user"
+
+# version-tag | php cli binary | fpm binary | pacman packages
+PROVIDERS="
+85|/usr/bin/php|/usr/bin/php-fpm|php php-fpm
+83|/usr/bin/php-legacy|/usr/bin/php-fpm-legacy|php-legacy php-legacy-fpm
+"
+
+die() { echo "covey: $*" >&2; exit 1; }
+provider_field() { echo "$PROVIDERS" | awk -F'|' -v v="$1" '$1==v {print $'"$2"'; exit}'; }
+php_bin()  { provider_field "$1" 2; }
+fpm_bin()  { provider_field "$1" 3; }
+php_pkgs() { provider_field "$1" 4; }
+
+render() { # render <src> <dest> ; substitutes @TOKENS@
+  sed -e "s|@RUNTIME@|$COVEY_RUNTIME|g" \
+      -e "s|@SITES@|$COVEY_SITES|g" \
+      -e "s|@VER@|$COVEY_DEFAULT_PHP|g" \
+      -e "s|@HOME@|$HOME|g" "$1" > "$2"
+}
+
+cmd_install() {
+  local src; src="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+  mkdir -p "$COVEY_CONFIG/php" "$COVEY_SITES" "$UNIT_DIR" "$HOME/.claude/skills"
+
+  # Dev-mode: the installed tree points back at the source checkout.
+  [[ -e "$COVEY_HOME" && ! -L "$COVEY_HOME" ]] && die "$COVEY_HOME exists and is not a symlink"
+  ln -sfn "$src" "$COVEY_HOME"
+
+
+  local ver="$COVEY_DEFAULT_PHP"
+  sed -e "s|@RUNTIME@|$COVEY_RUNTIME|g" -e "s|@VER@|$ver|g" \
+      "$src/share/php/pool.conf.in" > "$COVEY_CONFIG/php/$ver.conf"
+  echo "COVEY_FPM_BIN=$(fpm_bin "$ver")" > "$COVEY_CONFIG/php/$ver.env"
+
+  for u in covey.target covey-caddy.service 'covey-fpm@.service' covey-sync.service covey-sync.path; do
+    ln -sfn "$COVEY_HOME/share/systemd/$u" "$UNIT_DIR/$u"
+  done
+  ln -sfn "$COVEY_HOME/agents/skills/covey" "$HOME/.claude/skills/covey"
+
+  systemctl --user daemon-reload
+  systemctl --user add-wants covey.target "covey-fpm@$ver.service" >/dev/null 2>&1 || true
+  systemctl --user add-wants covey.target covey-caddy.service >/dev/null 2>&1 || true
+  systemctl --user add-wants covey.target covey-sync.path >/dev/null 2>&1 || true
+  cmd_sync
+  echo "covey installed. sites root: $COVEY_SITES"
+}
+
+# Regenerate the Caddyfile from the contents of $COVEY_SITES, then reload.
+# Each site gets its own named block so it gets its own single-name cert.
+cmd_sync() {
+  local src="$COVEY_HOME" out="$COVEY_CONFIG/Caddyfile" tmp
+  tmp="$(mktemp)"
+  render "$src/share/caddy/Caddyfile.in" "$tmp"
+  shopt -s nullglob
+  local n=0
+  for d in "$COVEY_SITES"/*/; do
+    d="${d%/}"
+    local name; name="$(basename "$d")"
+    # Skip names that can't be a DNS label.
+    [[ "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || continue
+    local ver; ver="$(site_php_version "$d")"
+    printf '\n%s.localhost {\n\timport covey_site %s %s/covey/php%s.sock\n}\n' \
+      "$name" "$d" "$COVEY_RUNTIME" "$ver" >> "$tmp"
+    n=$((n+1))
+  done
+  if [[ $n -eq 0 ]]; then
+    printf '\nlocalhost {\n\trespond "covey: no sites in %s"\n}\n' "$COVEY_SITES" >> "$tmp"
+  fi
+  if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
+    caddy validate --config "$tmp" --adapter caddyfile 2>&1 | grep -iE 'error' | head -3 >&2
+    rm -f "$tmp"; die "generated Caddyfile failed validation (kept existing config)"
+  fi
+  mv "$tmp" "$out"
+  if systemctl --user is-active --quiet covey-caddy.service; then
+    systemctl --user reload covey-caddy.service
+  fi
+  echo "covey: synced $n site(s)"
+}
+
+# Which PHP version tag should this site use? (stage 2 extends this)
+site_php_version() {
+  echo "$COVEY_DEFAULT_PHP"
+}
+
+cmd_start()   { systemctl --user start covey.target; cmd_status; }
+cmd_stop()    { systemctl --user stop covey.target 'covey-caddy.service' 'covey-fpm@*.service'; }
+cmd_restart() { cmd_stop || true; cmd_start; }
+cmd_reload()  { systemctl --user reload covey-caddy.service && echo "caddy reloaded"; }
+
+cmd_status() {
+  printf '%-26s %s\n' "UNIT" "STATE"
+  for u in covey-caddy.service "covey-fpm@$COVEY_DEFAULT_PHP.service"; do
+    printf '%-26s %s\n' "$u" "$(systemctl --user is-active "$u" 2>/dev/null || echo inactive)"
+  done
+}
+
+cmd_sites() {
+  [[ -d "$COVEY_SITES" ]] || die "no sites root at $COVEY_SITES"
+  shopt -s nullglob
+  local found=0
+  for d in "$COVEY_SITES"/*/; do
+    d="${d%/}"; local n; n="$(basename "$d")"
+    local kind="static"; [[ -f "$d/public/index.php" ]] && kind="app (public/)"
+    printf '%-22s %-14s https://%s.localhost\n' "$n" "$kind" "$n"
+    found=1
+  done
+  [[ $found -eq 0 ]] && echo "no sites yet - try: mkdir $COVEY_SITES/hello"
+  return 0
+}
+
+cmd_logs() {
+  case "${1:-caddy}" in
+    caddy) journalctl --user -u covey-caddy.service -n "${2:-50}" --no-pager ;;
+    php)   journalctl --user -u "covey-fpm@$COVEY_DEFAULT_PHP.service" -n "${2:-50}" --no-pager ;;
+    *) die "unknown log target: $1 (caddy|php)" ;;
+  esac
+}
+
+usage() {
+  cat <<EOF
+covey - local PHP development environment
+
+  covey install            render config, link units and agent skill
+  covey start|stop|restart bring the environment up or down
+  covey sync               regenerate site config from $COVEY_SITES
+  covey reload             reload the web server config
+  covey status             show unit state
+  covey sites              list sites in $COVEY_SITES
+  covey logs [caddy|php]   tail logs
+
+Sites: a directory in $COVEY_SITES is served at https://<name>.localhost
+EOF
+}
+
+case "${1:-}" in
+  install) shift; cmd_install "$@" ;;
+  start)   shift; cmd_start "$@" ;;
+  stop)    shift; cmd_stop "$@" ;;
+  restart) shift; cmd_restart "$@" ;;
+  reload)  shift; cmd_reload "$@" ;;
+  sync)    shift; cmd_sync "$@" ;;
+  status)  shift; cmd_status "$@" ;;
+  sites)   shift; cmd_sites "$@" ;;
+  logs)    shift; cmd_logs "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command: $1 (try: covey help)" ;;
+esac

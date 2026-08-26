@@ -1,0 +1,15 @@
+[Unit]
+Description=Covey web server (Caddy)
+PartOf=covey.target
+After=network.target
+
+[Service]
+Type=notify
+Environment=XDG_DATA_HOME=%h/.local/share
+ExecStart=/usr/bin/caddy run --config %h/.config/covey/Caddyfile --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config %h/.config/covey/Caddyfile --adapter caddyfile --force
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=covey.target

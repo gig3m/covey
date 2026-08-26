@@ -1,0 +1,29 @@
+# Rendered by `covey sync` -- do not edit directly.
+# Source: share/caddy/Caddyfile.in
+{
+	admin localhost:2019
+}
+
+# Shared site definition.
+#   args[0] = site directory
+#   args[1] = php-fpm socket
+# A wildcard cert (*.localhost) can't be used: TLS clients reject a wildcard
+# with only one label after it, so each site gets its own named block + cert.
+(covey_site) {
+	tls internal
+
+	root * {args[0]}
+
+	# Framework layout (public/index.php) wins; otherwise serve the dir itself.
+	@public file public/index.php
+	handle @public {
+		root * {args[0]}/public
+		php_fastcgi unix/{args[1]}
+		file_server
+	}
+
+	handle {
+		php_fastcgi unix/{args[1]}
+		file_server
+	}
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch the Covey sites directory
+PartOf=covey.target
+
+[Path]
+PathModified=%h/Covey
+Unit=covey-sync.service
+
+[Install]
+WantedBy=covey.target

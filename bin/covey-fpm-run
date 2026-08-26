@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Resolve a covey PHP version tag (85, 83, ...) to its fpm binary and pool config.
+set -euo pipefail
+ver="${1:?usage: covey-fpm-run <version-tag>}"
+conf="$HOME/.config/covey/php/${ver}.conf"
+[[ -f "$conf" ]] || { echo "covey: no pool config for PHP ${ver} at ${conf}" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$HOME/.config/covey/php/${ver}.env"
+exec "$COVEY_FPM_BIN" --nodaemonize --fpm-config "$conf"

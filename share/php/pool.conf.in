@@ -1,0 +1,15 @@
+; Rendered by `covey install` -- do not edit directly.
+; Source: share/php/pool.conf.in
+[global]
+error_log = @RUNTIME@/covey/php@VER@.log
+daemonize = no
+
+[covey]
+; Runs as the invoking user, so it reads ~/Covey with no ACL games.
+listen = @RUNTIME@/covey/php@VER@.sock
+listen.mode = 0660
+pm = ondemand
+pm.max_children = 16
+pm.process_idle_timeout = 60s
+catch_workers_output = yes
+php_admin_value[memory_limit] = 512M

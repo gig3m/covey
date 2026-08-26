@@ -1,0 +1,14 @@
+[Unit]
+Description=Covey PHP-FPM pool (PHP %i)
+PartOf=covey.target
+
+[Service]
+Type=simple
+RuntimeDirectory=covey
+RuntimeDirectoryPreserve=yes
+ExecStart=%h/.local/share/covey/bin/covey-fpm-run %i
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=covey.target

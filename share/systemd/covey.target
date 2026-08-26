@@ -1,0 +1,6 @@
+[Unit]
+Description=Covey local development environment
+Documentation=https://github.com/gig3m/covey
+
+[Install]
+WantedBy=default.target

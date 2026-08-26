@@ -1,0 +1,6 @@
+[Unit]
+Description=Covey site config sync
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/covey/bin/covey sync
