@@ -44,6 +44,13 @@ MySQL, Redis and Mailpit run as one Docker Compose stack under
 `.env` works unchanged (`127.0.0.1`, root, empty password, default ports).
 Mailpit's UI is at <http://127.0.0.1:8025>.
 
+## Certificates
+
+`covey trust` installs the local CA into both the system store and the browser
+(NSS) store. Both are needed: `caddy trust` writes only the system store, so
+without the NSS half every browser rejects the certificate while curl accepts
+it. Browsers read NSS at startup, so restart after running it.
+
 ## Doctor and the bar
 
 `covey doctor` checks the platform and every site; `--json` emits the same

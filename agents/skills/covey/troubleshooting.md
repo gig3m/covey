@@ -47,7 +47,8 @@ changed something and need current truth.
 | `constraint_unsatisfiable` | No installed PHP satisfies `require.php` | `covey php list`, then install one |
 | `docker_unavailable` | Docker is not responding | `sudo systemctl start docker` |
 | `service_down` | Nothing listening on a service port | `covey services up` |
-| `tls_untrusted` | Cert is not trusted by the system store | `sudo caddy trust` |
+| `tls_untrusted` | Cert is not trusted by the system store | `covey trust` (root) |
+| `ca_untrusted_by_browsers` | Local CA missing from the browser (NSS) store | `covey trust` (root) |
 | `http_failed` | Request to the site failed | `covey logs caddy` |
 | `http_5xx` | Site returned 5xx - usually an application error | `covey logs php` |
 | `database_missing` | `.covey` declares a database that does not exist | `covey db create <name>` |
@@ -64,6 +65,12 @@ Report these to the user; do not expect a covey command to fix them.
 
 **A brand-new site's first request fails TLS, then works.** Normal - the
 certificate is issued on the first handshake. Retry once.
+
+**The site works in curl but the browser shows a certificate error.** Chrome
+and Firefox on Linux read their own NSS database (`~/.pki/nssdb`), not the
+system trust store, and `caddy trust` only writes the system store. Run
+`covey trust`, then **restart the browser** - it reads NSS at startup, so an
+already-running browser keeps rejecting the certificate until restarted.
 
 **`Vite manifest not found`.** Assets are not built. App-level, not covey:
 run `npm install && npm run build` in the project.

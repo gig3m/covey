@@ -29,6 +29,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey reload             reload the web server config
     covey status             show unit state
     covey doctor [--json]    check the platform and every site
+    covey trust              trust the local CA (system + browser stores)
     covey sites              list sites, their PHP version and URLs
     covey php [list|install <tag>|configure <tag>]
     covey services [up|down|status|logs]

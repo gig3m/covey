@@ -221,6 +221,33 @@ cmd_php_configure() {
   fi
 }
 
+# --- certificate trust -------------------------------------------------------
+# Caddy's `trust` installs into the system store only, and short-circuits once
+# it is there. Chrome and Firefox on Linux read their own NSS database, so
+# without this the site is trusted by curl and rejected by every browser.
+NSSDB="$HOME/.pki/nssdb"
+CADDY_ROOT="$HOME/.local/share/caddy/pki/authorities/local/root.crt"
+CA_NICK="Caddy Local Authority - 2026 ECC Root"
+
+nss_has_ca() { certutil -d "sql:$NSSDB" -L 2>/dev/null | grep -q "Caddy Local Authority"; }
+
+cmd_trust() {
+  [[ -f "$CADDY_ROOT" ]] || die "no local CA yet at $CADDY_ROOT (start covey first)"
+  sudo env XDG_DATA_HOME="$HOME/.local/share" HOME="$HOME" caddy trust >/dev/null 2>&1 \
+    && echo "system store: ok" || warn "system store: caddy trust failed"
+  if ! command -v certutil >/dev/null 2>&1; then
+    warn "certutil not found (pacman -S nss) - browsers will not trust the CA"; return 1
+  fi
+  mkdir -p "$NSSDB"
+  certutil -d "sql:$NSSDB" -L >/dev/null 2>&1 || certutil -d "sql:$NSSDB" -N --empty-password
+  if nss_has_ca; then echo "browser (NSS) store: already trusted"
+  else
+    certutil -d "sql:$NSSDB" -A -t "C,," -n "$CA_NICK" -i "$CADDY_ROOT" \
+      && echo "browser (NSS) store: added"
+  fi
+  echo "restart your browser for it to pick up the new certificate authority"
+}
+
 cmd_doctor() { core doctor "$@"; }
 
 cmd_start()   { systemctl --user start covey.target; cmd_status; }
@@ -273,6 +300,7 @@ covey - local PHP development environment
   covey reload               reload the web server config
   covey status               show unit state
   covey doctor [--json]      check the platform and every site
+  covey trust                trust the local CA in the system and browser stores
   covey sites                list sites, their PHP version and URLs
   covey php [list|install T|configure T]  PHP providers and extensions
   covey services [up|down|status|logs]
@@ -294,6 +322,7 @@ case "${1:-}" in
   php)     shift; cmd_php "$@" ;;
   status)  shift; cmd_status "$@" ;;
   doctor)  shift; cmd_doctor "$@" ;;
+  trust)   shift; cmd_trust "$@" ;;
   sites)   shift; cmd_sites "$@" ;;
   services) shift; cmd_services "$@" ;;
   db)      shift; cmd_db "$@" ;;

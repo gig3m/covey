@@ -200,6 +200,21 @@ function platform_checks(): array {
             : chk("extensions-$series", OK);
     }
 
+    // Browsers read NSS, not the system store; being trusted by curl says nothing.
+    $nss = getenv('HOME') . '/.pki/nssdb';
+    if (is_dir($nss)) {
+        $out = (string)@shell_exec('certutil -d ' . escapeshellarg("sql:$nss") . ' -L 2>/dev/null');
+        $c[] = (stripos($out, 'Caddy Local Authority') !== false)
+            ? chk('browser-trust', OK, ['detail'=>'local CA in NSS store'])
+            : chk('browser-trust', false, ['problem'=>'ca_untrusted_by_browsers',
+                'detail'=>'local CA is not in the browser (NSS) store',
+                'fix'=>fix('covey trust', true)]);
+    } else {
+        $c[] = chk('browser-trust', false, ['problem'=>'ca_untrusted_by_browsers',
+            'detail'=>'no NSS store; browsers will reject the certificate',
+            'fix'=>fix('covey trust', true)]);
+    }
+
     exec('docker info >/dev/null 2>&1', $o, $rc);
     if ($rc !== 0) {
         $c[] = chk('docker', false, ['problem'=>'docker_unavailable',
