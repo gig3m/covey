@@ -1,0 +1,115 @@
+# covey — working notes for agents
+
+A local PHP development environment for Linux. A directory in `~/Covey` is
+served at `https://<name>.localhost`. See `README.md` for user docs and
+`agents/skills/covey/` for the operator-facing skill.
+
+**This file is about working ON covey.** The skill is about USING it.
+
+## The charter (settled, do not drift)
+
+covey manages **the platform**. It never modifies files inside a project.
+
+- **In:** serving, TLS, PHP versions and extensions, MySQL/Redis/Mailpit,
+  databases on request, and checks for all of the above.
+- **Out:** `.env`, `APP_KEY`, `storage/` permissions, `composer install`,
+  `vendor/`, npm/asset builds, queue workers, schedulers.
+
+Scope was set as "covey does Herd things, no more." Two consequences that have
+already been litigated: databases are **not** auto-created when a site appears
+(that would beat Herd, which is out of scope), and app-level failures are
+*reported*, never fixed. This boundary doubles as the agent safety boundary —
+covey exposes no path to write inside a project.
+
+Reading project metadata (`composer.json`, `.covey`) is **in** scope; it is how
+covey decides what platform to provide. Writing project files is not.
+
+## Architecture invariants
+
+**`share/php/core.php` is the single source of truth** for the provider
+registry, PHP version resolution, and the check model. `bin/covey` is a thin
+shell wrapper that calls it. Resolution once lived in bash and would have
+drifted from doctor's view of the same sites — do not reimplement it there.
+
+**`share/providers.tsv` and `share/extensions.txt` are shared data**, read by
+both the shell and PHP sides. Adding a PHP version is one row in the TSV.
+
+**One JSON model, three renderers.** `covey doctor` produces the model;
+terminal output, `--json`, and the omarchy bar widget all render it. The bar is
+a renderer, never a second source of truth.
+
+**The `fix` / `hint` contract.** A failing check carries `fix.cmd` only when it
+is a runnable command. When nothing can fix it automatically, it carries `hint`
+(prose) and no `fix`. An agent must be able to execute any `fix.cmd` blindly.
+Branch on `problem` (stable code), never on `detail` (human text).
+
+**Everything is a user systemd unit under `covey.target`.** No root daemons.
+FPM runs as the user so it reads `~/Covey` without ACLs.
+
+**Dev install is a symlink**: `~/.local/share/covey` → this checkout. Editing
+the project takes effect immediately; moving or deleting it breaks the running
+environment.
+
+## Hard-won facts (rediscovering these costs hours)
+
+- **A wildcard `*.localhost` certificate cannot work.** TLS clients reject a
+  wildcard with only one label after it (`*.localhost` is treated like `*.com`);
+  Caddy warns about this itself. This is *why* site config is generated
+  per-site rather than one wildcard block. On-demand TLS does not help — Caddy
+  still serves the wildcard because it is a configured site name. The generated
+  block also carries the site's FPM socket, which is what makes per-site PHP
+  versions work.
+- **`caddy trust` only writes the system store**, and short-circuits once the
+  CA is there. Chrome and Firefox on Linux read their own NSS database
+  (`~/.pki/nssdb`), which may not exist at all. Result: trusted by curl,
+  rejected by every browser — invisible to command-line testing. `covey trust`
+  does both halves. Browsers read NSS at startup, so they need a restart.
+- **Arch enables almost no PHP extensions.** Modules ship as `.so` and are off;
+  `php-redis` and `php-igbinary` ship their `.ini` with `extension=` commented
+  out. `igbinary` must load before `redis`. Stock Arch PHP has no `pdo_mysql`
+  and no sqlite module at all — and Laravel 11+ defaults to SQLite.
+- **covey's extension list is fixed, so it cannot see what a project needs.**
+  That is why doctor also runs `composer check-platform-reqs` per site.
+- **User services cannot bind :80/:443** until
+  `net.ipv4.ip_unprivileged_port_start=80`. `covey install` warns; it does not
+  set it (that needs root).
+- **`covey-sync.path` watches only the top level of `~/Covey`.** New and removed
+  sites are caught; edits to a site's `.covey` or `composer.json` are not. Run
+  `covey sync`.
+- **The bar widget instantiates once per monitor.** Only the first IPC handler
+  registers (the shell logs a benign duplicate-handler warning). After changing
+  the widget's IPC surface, `omarchy restart shell` — a plugin rescan alone can
+  keep the stale handler.
+- **Bar styling must follow the shell**: bind `font.family` to the bar's
+  `fontFamily`, falling back to `Style.font.family` (the fontconfig `monospace`
+  alias). Never bind to `Style.font.resolvedFamily` — that exists only for
+  *displaying* which family is drawing.
+
+## Verifying changes
+
+    covey doctor            # exit 0 = healthy, 1 = something failed
+    covey doctor --json     # the model itself
+
+Test failure paths, not just the happy path — the whole point of covey is that
+breakage is legible. Cheap ways to force one:
+
+    mkdir ~/Covey/x && printf 'database = nope\n' > ~/Covey/x/.covey  # database_missing
+    printf 'php = 8.2\n' > ~/Covey/x/.covey                           # no_provider
+    docker compose -f share/compose/covey.yaml stop redis             # service_down
+
+For the bar widget there is no substitute for looking at it. `grim` can capture
+it; this machine has two monitors (DP-2 logical 0–3072 at scale 1.25, HDMI-A-1
+beyond that), and the bar's right section sits near x≈2560–3072 on DP-2.
+`omarchy-shell covey toggle` opens the flyout without a mouse.
+
+## Deliberately not done
+
+- No auto-provisioning of databases (out of charter).
+- No MCP server — a skill plus a JSON CLI is the pattern omarchy uses, and a
+  daemon protocol would exceed it.
+- No `covey uninstall`. covey writes to ~8 locations outside the project, three
+  root-owned; there is currently no teardown. This is a known gap.
+- PHP providers are limited to verified rows in `providers.tsv` (8.5, 8.3).
+  AUR has `php74`–`php84` if a project ever needs one; shipping unverified
+  binary paths would create exactly the "why isn't it working" problem covey
+  exists to remove.
