@@ -103,9 +103,13 @@ BarWidget {
       var site = d.sites[s]
       var st = stateOf(site.checks || [])
       var ver = site.php && site.php.series ? String(site.php.series) : "?"
-      versions[ver] = true
+      // A site taken down with `covey site down` is off on purpose: it dims
+      // rather than turning red, and its version does not appear in the header
+      // summary because no pool is being kept alive for it.
+      var live = site.enabled !== false
+      if (live) versions[ver] = true
       list.push({ name: String(site.name), url: String(site.url),
-                  php: ver, ok: st.ok, state: st.text })
+                  php: ver, ok: st.ok, state: st.text, enabled: live })
     }
 
     root.known = true
@@ -257,6 +261,8 @@ BarWidget {
         Item {
           width: column.width
           height: Style.space(22)
+          // Same treatment the bar gives a deliberately-stopped stack.
+          opacity: modelData.enabled === false ? 0.45 : 1.0
 
           Rectangle {
             id: dot
@@ -264,7 +270,8 @@ BarWidget {
             width: Style.space(7)
             height: width
             radius: width / 2
-            color: modelData.ok ? Qt.darker(Color.popups.text, 1.6) : Color.urgent
+            color: (modelData.ok || modelData.enabled === false)
+                     ? Qt.darker(Color.popups.text, 1.6) : Color.urgent
           }
           Text {
             id: nameText
@@ -281,8 +288,11 @@ BarWidget {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
-            text: modelData.ok ? modelData.php : modelData.state
-            color: modelData.ok ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
+            text: modelData.enabled === false
+                    ? "disabled"
+                    : (modelData.ok ? modelData.php : modelData.state)
+            color: (modelData.ok || modelData.enabled === false)
+                     ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
             font.family: root.uiFont
             font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight

@@ -52,6 +52,21 @@ failures each carrying a `fix.cmd` telling an agent to start what the user had
 just stopped. Derive the state from systemd, never from a marker file - a marker
 is a second source of truth and will drift.
 
+**A disabled site is a state, not a failure** — the per-site twin of the rule
+above. `covey site down <name>` records the name in `~/.config/covey/disabled`
+and the site then emits no check that can fail, so doctor can go green again
+with a half-finished project checked out. This is declared *intent*, not an
+observation, which is why it lives in a file and does not contradict "derive
+state from systemd": a site is a Caddy block, not a unit, so there is nothing
+to derive it from, and it cannot live in the generated Caddyfile (sync rewrites
+it) or the project's `.covey` (covey never writes inside a project). See
+`docs/DESIGN.md` §10.
+
+**`~/Covey` is enumerated in exactly one place**: `core.php sites`, which emits
+name/dir/tag/enabled/kind. `cmd_sync` and `cmd_sites` consume it. It was
+previously globbed in three places with the name regex copy-pasted into each —
+do not add a fourth.
+
 **The `fix` / `hint` contract.** A failing check carries `fix.cmd` only when it
 is a runnable command. When nothing can fix it automatically, it carries `hint`
 (prose) and no `fix`. An agent must be able to execute any `fix.cmd` blindly.

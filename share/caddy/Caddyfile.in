@@ -27,3 +27,15 @@
 		file_server
 	}
 }
+
+# A site taken down with `covey site down`. It keeps a block (and therefore a
+# working certificate) so the reason is legible: dropping the block instead
+# would give a bare TLS/connection error with no hint that this was deliberate.
+#   args[0] = site name
+(covey_disabled) {
+	tls internal
+
+	respond `covey: {args[0]} is disabled
+  bring it back: covey site up {args[0]}
+` 503
+}

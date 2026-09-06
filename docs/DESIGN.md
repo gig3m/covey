@@ -221,7 +221,58 @@ Generating one block per site fixed the certificate problem **and** removed the
 open question entirely — each generated block simply carries its own socket as
 a literal. The constraint produced a simpler design than the one it destroyed.
 
-## 10. What running a real application changed
+## 10. Per-site up/down, and why a file here is not a marker file
+
+`covey down` was all or nothing, which left one real gap: doctor is the
+centrepiece (§6), and its value collapses if it is permanently red. With
+seventeen sites checked out, several half-finished, `ok` was false and the bar
+was urgent more or less always — so the signal stopped meaning anything. The
+fix is not better checks; it is being able to say "not this one, not today."
+
+The obvious objection is that `CLAUDE.md` forbids exactly this: *derive state
+from systemd, never from a marker file.* The distinction that resolves it:
+
+- The **stack's** up/down is an **observation**. `covey.target` already knows
+  it, so a file recording it too is a second copy that will drift. Forbidden,
+  and rightly.
+- A **site's** up/down is **declared intent**. Nothing else on the machine
+  knows it, and nothing can: a site is a generated Caddy block, not a unit, so
+  there is no unit state to read. It cannot be kept in the generated Caddyfile
+  either, because `covey sync` rewrites that from scratch every run — the state
+  would erase itself. And it cannot go in the project's `.covey`, because covey
+  never writes inside a project — the charter.
+
+That leaves one covey-owned file, `~/.config/covey/disabled`. It is *input* to
+the model, not a cached copy of a fact something else owns, which is precisely
+what keeps it from being the failure mode the rule was written about.
+
+**The memory story is smaller than it looks, and saying so matters.** Pools are
+per PHP version, shared by every site on that version. Disabling one of a dozen
+8.5 sites frees nothing at all. It frees a pool (~25 MiB) only when it is the
+last site on a version — which is why `covey sync` gained the ability to *stop*
+a pool no enabled site asks for, something it previously never did (it only
+ever called `add-wants` and started them, so pools accumulated for the life of
+the login session). Sold as a memory feature this would disappoint; the honest
+pitch is that it is a legibility feature that occasionally reclaims a pool.
+
+Two consequences fell out, both reusing decisions already made:
+
+- **A disabled site emits no check that can fail**, exactly as a stopped stack
+  runs no runtime checks. Same rule, same reason: off on purpose is a state,
+  not a failure.
+- **It still gets a Caddy block**, answering 503 with the command that undoes
+  it. Removing the block was the tidier implementation and the worse product —
+  it produces a bare TLS error, indistinguishable from a broken site, which is
+  the exact failure shape §11 records as the worst available.
+
+It also forced a cleanup that was overdue: `~/Covey` was being enumerated in
+*three* places — `sites()` in core.php, the loop in `cmd_sync`, and `cmd_sites`
+— with the site-name regex copy-pasted into each. A disabled list would have
+been a fourth thing to keep in step. They now all consume `core.php sites`,
+which is what the "core.php is the single source of truth" invariant asked for
+in the first place.
+
+## 11. What running a real application changed
 
 The design was validated by cloning an actual Laravel 12 app, not by reasoning.
 Three defects surfaced within minutes, all invisible from the armchair:

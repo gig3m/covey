@@ -14,6 +14,7 @@ $COVEY   = env_or('COVEY_HOME',    "$HOME/.local/share/covey");
 $SITES   = env_or('COVEY_SITES',   "$HOME/Covey");
 $RUNTIME = env_or('XDG_RUNTIME_DIR', '/run/user/' . getmyuid());
 $DEFAULT = env_or('COVEY_DEFAULT_PHP', '85');
+$CONFIG  = env_or('COVEY_CONFIG',  "$HOME/.config/covey");
 
 // ---- providers -------------------------------------------------------------
 function providers(): array {
@@ -151,6 +152,32 @@ function sites(): array {
     return $out;
 }
 
+// ---- enablement ------------------------------------------------------------
+// Per-site up/down. Unlike the stack's up/down -- an *observation*, derived
+// from systemd -- a site's is *declared intent*, and there is nothing to derive
+// it from: a site is a generated Caddy block, not a unit. It cannot live in the
+// generated Caddyfile either, since `covey sync` overwrites that from scratch,
+// nor in the project's own `.covey`, because covey never writes inside a
+// project. So it is stored here, in one covey-owned file naming what is off.
+// This is input, not a cached copy of a fact something else already knows,
+// which is what keeps it from being the kind of marker file that drifts.
+function disabled_sites(): array {
+    global $CONFIG;
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $cache = [];
+    $f = "$CONFIG/disabled";
+    if (is_file($f)) {
+        foreach (file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $l) {
+            $l = trim($l);
+            if ($l === '' || $l[0] === '#') continue;
+            $cache[$l] = true;
+        }
+    }
+    return $cache;
+}
+function site_enabled(string $name): bool { return !isset(disabled_sites()[$name]); }
+
 // ---- checks ----------------------------------------------------------------
 function unit_active(string $u): bool {
     exec('systemctl --user is-active --quiet ' . escapeshellarg($u), $o, $rc);
@@ -172,7 +199,12 @@ const RUNTIME_PROBLEMS = ['caddy_inactive', 'pool_inactive', 'service_down', 'do
 function needed_tags(): array {
     global $DEFAULT;
     $n = [];
-    foreach (sites() as $d) $n[resolve_site($d)['tag']] = true;
+    // Only enabled sites keep a pool alive; that is what makes `covey site down`
+    // able to free one, rather than merely stop serving.
+    foreach (sites() as $name => $d) {
+        if (!site_enabled($name)) continue;
+        $n[resolve_site($d)['tag']] = true;
+    }
     if (!$n) $n[$DEFAULT] = true;
     return array_keys($n);
 }
@@ -328,6 +360,21 @@ function site_report(string $name, string $dir, bool $live): array {
     $r = resolve_site($dir);
     $p = provider($r['tag']);
     $checks = [];
+    $enabled = site_enabled($name);
+    $ident = ['name'=>$name, 'url'=>"https://$name.localhost", 'path'=>$dir,
+              'enabled'=>$enabled,
+              'php'=>['tag'=>$r['tag'], 'series'=>$p['series'] ?? null,
+                      'resolved'=>tag_version($r['tag']), 'required'=>$r['required'],
+                      'source'=>$r['source']]];
+
+    // A disabled site is a state, not a failure -- the same rule the stack
+    // already follows. It emits no check that can fail, so taking a site down
+    // is a way to make a green doctor mean something again. Its real checks
+    // come back untouched on `covey site up`.
+    if (!$enabled) {
+        $ident['checks'] = [chk('site', OK, ['detail'=>'disabled (covey site up ' . $name . ')'])];
+        return $ident;
+    }
 
     if (($r['problem'] ?? '') === 'provider_not_installed') {
         $t = tag_for_series($r['wanted_series'] ?? '');
@@ -366,11 +413,8 @@ function site_report(string $name, string $dir, bool $live): array {
                     'fix'=>fix("covey db create {$cf['database']}")]));
     }
 
-    return ['name'=>$name, 'url'=>"https://$name.localhost", 'path'=>$dir,
-            'php'=>['tag'=>$r['tag'], 'series'=>$p['series'] ?? null,
-                    'resolved'=>tag_version($r['tag']), 'required'=>$r['required'],
-                    'source'=>$r['source']],
-            'checks'=>$checks];
+    $ident['checks'] = $checks;
+    return $ident;
 }
 
 // ---- resources -------------------------------------------------------------
@@ -531,7 +575,14 @@ function render_human(array $d): int {
     echo "PLATFORM\n";
     foreach ($d['platform'] as $c) $line($c);
     foreach ($d['sites'] as $s) {
-        printf("\n%s  %s\n", $s['name'], $s['url']);
+        // Dim a deliberately-disabled site rather than colouring it like a
+        // failure; it is off on purpose.
+        $hdr = sprintf("%s  %s", $s['name'], $s['url']);
+        if (($s['enabled'] ?? true) === false) {
+            $hdr = sprintf("%s  (disabled)", $s['name']);
+            if ($tty) $hdr = "\033[2m$hdr\033[0m";
+        }
+        printf("\n%s\n", $hdr);
         foreach ($s['checks'] as $c) $line($c);
     }
     if (!$d['sites']) echo "\n(no sites)\n";
@@ -550,6 +601,17 @@ if ($cmd === 'resolve') {
     $dir = $argv[2] ?? '';
     if ($dir === '' || !is_dir($dir)) { fwrite(STDERR, "core.php resolve <site-dir>\n"); exit(2); }
     echo resolve_site($dir)['tag'];
+    exit(0);
+}
+// One enumeration of ~/Covey, consumed by `covey sync` and `covey sites` so the
+// name rules, version resolution and disabled list cannot drift between them.
+// Emits: name \t dir \t tag \t enabled(1|0) \t kind(app|static)
+if ($cmd === 'sites') {
+    foreach (sites() as $n => $d) {
+        printf("%s\t%s\t%s\t%d\t%s\n", $n, $d, resolve_site($d)['tag'],
+               site_enabled($n) ? 1 : 0,
+               is_file("$d/public/index.php") ? 'app' : 'static');
+    }
     exit(0);
 }
 if ($cmd === 'status') {
@@ -587,5 +649,5 @@ if ($cmd === 'doctor') {
     }
     exit(render_human($d));
 }
-fwrite(STDERR, "usage: core.php [resolve <dir>|doctor [--json] [--resources]|status [--json]]\n");
+fwrite(STDERR, "usage: core.php [resolve <dir>|sites|doctor [--json] [--resources]|status [--json]]\n");
 exit(2);

@@ -27,6 +27,7 @@ tells you why.
 - [PHP versions](#php-versions)
 - [Services](#services)
 - [Up and down](#up-and-down)
+- [Per-site up and down](#per-site-up-and-down)
 - [Certificates](#certificates)
 - [`covey doctor`](#covey-doctor)
 - [Status bar](#status-bar)
@@ -101,6 +102,7 @@ covey doctor
 | `covey status` | Stack state, unit state, and memory in use |
 | `covey doctor [--json]` | Check the platform and every site |
 | `covey sites` | List sites, their PHP version and URLs |
+| `covey site up\|down <name>` | Take one site in or out of service |
 | `covey sync` | Regenerate site config from `~/Covey`, reload |
 | `covey php list` | Show PHP providers |
 | `covey php install <tag>` | Install a PHP provider |
@@ -251,6 +253,42 @@ login behaviour alone. `covey autostart off` is the separate, persistent choice.
 Container memory costs a ~2s `docker stats` sample, so it is measured only where
 you asked for it — `covey status` and `covey doctor --json --resources` — never
 on the path the bar widget polls.
+
+## Per-site up and down
+
+`covey down` is all or nothing. To take a single site out of service and leave
+the rest running:
+
+```console
+$ covey site down baseline
+covey: baseline is down (covey site up baseline to bring it back)
+
+$ curl -s https://baseline.localhost
+covey: baseline is disabled
+  bring it back: covey site up baseline
+
+$ covey site up baseline
+covey: baseline is up - https://baseline.localhost
+```
+
+A disabled site keeps a Caddy block on purpose, so it answers with a 503 that
+explains itself. Dropping the block would give a bare TLS error instead — the
+kind of unexplained failure covey exists to remove.
+
+**What this is for is quiet, not memory.** FPM pools are per PHP *version* and
+shared by every site on it, so switching off one of a dozen sites on 8.5 frees
+nothing. What it does do:
+
+- **`covey doctor` stops counting it.** A disabled site emits no check that can
+  fail, so doctor going green — and the bar staying calm — means "everything
+  I care about today is fine", instead of being permanently red because of a
+  half-finished project you are not working on. Same rule as a stopped stack:
+  off on purpose is a state, not a failure.
+- **It does free a pool when it is the last site on a version.** `covey sync`
+  stops any FPM pool no enabled site asks for (~25 MiB each).
+
+The list of what is off lives in `~/.config/covey/disabled`, one name per line.
+It is never written into the project — covey does not touch your files.
 
 ## Certificates
 

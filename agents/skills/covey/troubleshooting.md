@@ -20,6 +20,7 @@ passes and `1` when anything fails.
       "platform": [ <check>, ... ],
       "sites": [
         { "name": "pub", "url": "https://pub.localhost", "path": "...",
+          "enabled": true,        // false = `covey site down`; emits no failing check
           "php": {"tag":"83","series":"8.3","resolved":"8.3.33",
                   "required":"^8.3","source":"composer.json"},
           "checks": [ <check>, ... ] }
@@ -59,6 +60,17 @@ existence). It exits 0, because a stopped stack is not a broken one.
 
 So a site that "is not loading" while `state` is `down` needs `covey up`, not a
 diagnosis. Check `state` before reading `ok`.
+
+## A disabled site is not a failure
+
+`"enabled": false` means someone ran `covey site down <name>`. Such a site
+carries a single passing `site` check reading `disabled (covey site up <name>)`
+and **nothing that can fail** - the same rule that keeps a stopped stack from
+reporting eight red checks. Do not "fix" it: bringing it back is the user's
+call, and `covey site up <name>` is the only thing that does so.
+
+It still answers over HTTPS with a 503 explaining itself, so a disabled site
+and a broken one never look alike.
 
 ## Problem codes
 

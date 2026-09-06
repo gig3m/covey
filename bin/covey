@@ -52,6 +52,15 @@ tag_for_version() {  # 8.3.33 -> 83
 core() { COVEY_HOME="$COVEY_SRC" COVEY_SITES="$COVEY_SITES" COVEY_DEFAULT_PHP="$COVEY_DEFAULT_PHP" \
          "$(php_bin "$COVEY_DEFAULT_PHP")" "$COVEY_SRC/share/php/core.php" "$@"; }
 site_php_tag() { core resolve "$1" 2>/dev/null || echo "$COVEY_DEFAULT_PHP"; }
+# name \t dir \t tag \t enabled(1|0) \t kind. One enumeration for every caller.
+core_sites()   { core sites 2>/dev/null; }
+
+# --- per-site enablement ----------------------------------------------------
+# Declared intent, so it has to be stored; see the note in share/php/core.php.
+# Never written inside the project - covey does not touch project files.
+DISABLED_FILE="$COVEY_CONFIG/disabled"
+site_exists()   { [[ -d "$COVEY_SITES/$1" ]]; }
+site_disabled() { [[ -f "$DISABLED_FILE" ]] && grep -qxF "$1" "$DISABLED_FILE"; }
 
 # --- pools ------------------------------------------------------------------
 ensure_php_pool() {
@@ -147,20 +156,23 @@ cmd_install() {
 cmd_sync() {
   local out="$COVEY_CONFIG/Caddyfile" tmp; tmp="$(mktemp)"
   render "$COVEY_SRC/share/caddy/Caddyfile.in" "$tmp"
-  shopt -s nullglob
-  local n=0 used=() d name ver
-  for d in "$COVEY_SITES"/*/; do
-    d="${d%/}"; name="$(basename "$d")"
-    # Dotted names are allowed: `kylearrington.com` -> kylearrington.com.localhost,
-    # which resolves like any other name under .localhost.
-    [[ "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || continue
-    ver="$(site_php_tag "$d")"
-    used+=("$ver")
-    printf '\n%s.localhost {\n\timport covey_site %s %s/covey/php%s.sock\n}\n' \
-      "$name" "$d" "$COVEY_RUNTIME" "$ver" >> "$tmp"
-    n=$((n+1))
-  done
-  [[ $n -eq 0 ]] && printf '\nlocalhost {\n\trespond "covey: no sites in %s"\n}\n' "$COVEY_SITES" >> "$tmp"
+  # Enumeration, name validation and version resolution all come from core.php,
+  # so sync cannot disagree with doctor about which sites exist or what they run.
+  local n=0 off=0 used=() name d ver enabled kind
+  while IFS=$'\t' read -r name d ver enabled kind; do
+    [[ -n "$name" ]] || continue
+    if [[ "$enabled" == "1" ]]; then
+      used+=("$ver")
+      printf '\n%s.localhost {\n\timport covey_site %s %s/covey/php%s.sock\n}\n' \
+        "$name" "$d" "$COVEY_RUNTIME" "$ver" >> "$tmp"
+      n=$((n+1))
+    else
+      # Still served, but only to say why - see (covey_disabled).
+      printf '\n%s.localhost {\n\timport covey_disabled %s\n}\n' "$name" "$name" >> "$tmp"
+      off=$((off+1))
+    fi
+  done < <(core_sites)
+  [[ $((n + off)) -eq 0 ]] && printf '\nlocalhost {\n\trespond "covey: no sites in %s"\n}\n' "$COVEY_SITES" >> "$tmp"
 
   if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
     caddy validate --config "$tmp" --adapter caddyfile 2>&1 | grep -iE 'error' | head -3 >&2
@@ -173,8 +185,21 @@ cmd_sync() {
     [[ -z "$v" || "$seen" == *" $v "* ]] && continue
     seen+="$v "; ensure_php_pool "$v" || true
   done
+  # A pool no site asks for any more is just resident memory. Stopping it here
+  # is what makes `covey site down` able to actually free something, rather
+  # than only stop serving - pools are per PHP version, shared by every site on
+  # it, so this only fires on the last site of a version.
+  local t
+  for t in $(all_tags); do
+    [[ "$seen" == *" $t "* ]] && continue
+    systemctl --user is-active --quiet "covey-fpm@$t.service" || continue
+    systemctl --user stop "covey-fpm@$t.service" 2>/dev/null || true
+    rm -f "$UNIT_DIR/covey.target.wants/covey-fpm@$t.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+  done
   systemctl --user is-active --quiet covey-caddy.service && systemctl --user reload covey-caddy.service
-  echo "covey: synced $n site(s)"
+  if [[ $off -gt 0 ]]; then echo "covey: synced $n site(s), $off disabled"
+  else echo "covey: synced $n site(s)"; fi
 }
 
 cmd_php() {
@@ -305,17 +330,47 @@ cmd_autostart() {
 
 cmd_sites() {
   [[ -d "$COVEY_SITES" ]] || die "no sites root at $COVEY_SITES"
-  shopt -s nullglob
-  local found=0 d name kind ver
-  for d in "$COVEY_SITES"/*/; do
-    d="${d%/}"; name="$(basename "$d")"
-    kind="static"; [[ -f "$d/public/index.php" ]] && kind="app"
-    ver="$(site_php_tag "$d" 2>/dev/null)"
-    printf '%-20s %-7s php %-5s https://%s.localhost\n' "$name" "$kind" "$(series "$ver")" "$name"
+  local found=0 name d ver enabled kind state
+  while IFS=$'\t' read -r name d ver enabled kind; do
+    [[ -n "$name" ]] || continue
     found=1
-  done
+    if [[ "$enabled" == "1" ]]; then
+      printf '%-20s %-7s php %-5s https://%s.localhost\n' "$name" "$kind" "$(series "$ver")" "$name"
+    else
+      printf '%-20s %-7s %-9s %s\n' "$name" "$kind" "disabled" "(covey site up $name)"
+    fi
+  done < <(core_sites)
   [[ $found -eq 0 ]] && echo "no sites yet - try: mkdir $COVEY_SITES/hello"
   return 0
+}
+
+# Per-site up/down. `covey down` stops the whole stack; this takes one site out
+# of service without touching the rest - and without touching the project.
+cmd_site() {
+  local action="${1:-list}"
+  case "$action" in
+    list|"") cmd_sites ;;
+    up|down)
+      local name="${2:-}"
+      [[ -n "$name" ]] || die "usage: covey site $action <name>"
+      site_exists "$name" || die "no such site: $name (try: covey sites)"
+      mkdir -p "$COVEY_CONFIG"
+      if [[ "$action" == "down" ]]; then
+        site_disabled "$name" && { echo "covey: $name is already down"; return 0; }
+        echo "$name" >> "$DISABLED_FILE"
+        cmd_sync >/dev/null
+        echo "covey: $name is down (covey site up $name to bring it back)"
+      else
+        site_disabled "$name" || { echo "covey: $name is already up"; return 0; }
+        # Rewrite without the name; keep everything else byte for byte.
+        local tmp; tmp="$(mktemp)"
+        grep -vxF "$name" "$DISABLED_FILE" > "$tmp" || true
+        mv "$tmp" "$DISABLED_FILE"
+        cmd_sync >/dev/null
+        echo "covey: $name is up - https://$name.localhost"
+      fi ;;
+    *) die "usage: covey site [list|up <name>|down <name>]" ;;
+  esac
 }
 
 cmd_logs() {
@@ -339,6 +394,7 @@ covey - local PHP development environment
   covey doctor [--json]      check the platform and every site
   covey trust                trust the local CA in the system and browser stores
   covey sites                list sites, their PHP version and URLs
+  covey site [up|down] <n>   take one site in or out of service
   covey php [list|install T|configure T]  PHP providers and extensions
   covey services [up|down|status|logs]
   covey db [list|create <n>|drop <n>|shell]
@@ -362,6 +418,7 @@ case "${1:-}" in
   doctor)  shift; cmd_doctor "$@" ;;
   trust)   shift; cmd_trust "$@" ;;
   sites)   shift; cmd_sites "$@" ;;
+  site)    shift; cmd_site "$@" ;;
   services) shift; cmd_services "$@" ;;
   db)      shift; cmd_db "$@" ;;
   logs)    shift; cmd_logs "$@" ;;

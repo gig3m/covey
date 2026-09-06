@@ -34,6 +34,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey doctor [--json]    check the platform and every site
     covey trust              trust the local CA (system + browser stores)
     covey sites              list sites, their PHP version and URLs
+    covey site up|down <n>   take one site in or out of service
     covey php [list|install <tag>|configure <tag>]
     covey services [up|down|status|logs]
     covey db [list|create <name>|drop <name>|shell]
@@ -132,6 +133,38 @@ Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
 
 Databases are **not** created automatically - creating one is an explicit
 action: `covey db create <name>`.
+
+## Per-site up and down
+
+`covey down` stops the whole stack. `covey site down <name>` takes **one** site
+out of service and leaves everything else running:
+
+    covey site down baseline     # stop serving it
+    covey site up baseline       # bring it back
+    covey sites                  # disabled sites are listed as such
+
+A disabled site still answers, with a 503 saying what happened:
+
+    covey: baseline is disabled
+      bring it back: covey site up baseline
+
+Dropping its Caddy block entirely would give a bare TLS error instead, with no
+sign covey did it deliberately.
+
+**What it is actually for.** FPM pools are per PHP *version*, shared by every
+site on it, so disabling one site among many on 8.5 frees nothing. Two things
+it does do:
+
+- **`covey doctor` stops reporting it.** A disabled site emits no check that
+  can fail, so a green doctor (and a calm bar) means "everything I care about
+  right now is fine" instead of being permanently red because of a project you
+  are not working on. This is the main reason to use it.
+- **It frees a pool when it is the last site on a version.** `covey sync` stops
+  an FPM pool no enabled site asks for any more (~25 MiB each).
+
+State lives in `~/.config/covey/disabled`, one name per line - never in the
+project. `covey site down` on a site that does not exist is an error, not a
+silent no-op.
 
 ## Up and down
 
