@@ -1,6 +1,12 @@
 [Unit]
 Description=Covey services (MySQL, Redis, Mailpit)
 PartOf=covey.target
+After=network.target
+# A pull needs DNS, which may not be up yet when this starts at login.
+# Retry rather than ordering on network-online.target: that target is inert
+# in the user manager (see CLAUDE.md).
+StartLimitIntervalSec=1800
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
@@ -8,6 +14,8 @@ RemainAfterExit=yes
 ExecStart=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml up -d --wait
 ExecStop=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml stop
 TimeoutStartSec=300
+Restart=on-failure
+RestartSec=10
 
 [Install]
 WantedBy=covey.target

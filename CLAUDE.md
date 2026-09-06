@@ -87,6 +87,17 @@ environment.
 - **User services cannot bind :80/:443** until
   `net.ipv4.ip_unprivileged_port_start=80`. `covey install` warns; it does not
   set it (that needs root).
+- **`After=network-online.target` is inert in the user manager.** The target is
+  not even loaded in the user instance (`systemctl --user is-active
+  network-online.target` → inactive, 0 units listed), so ordering on it is a
+  no-op that *looks* like a fix. On this machine the system side is no better:
+  `network-online.target` reports active while
+  `NetworkManager-wait-online.service` is masked, so nothing ever waited. This
+  bit `covey-services.service`, which starts at login and needs DNS when an
+  image must be pulled: it failed once at boot and stayed failed. The fix is a
+  **retry** (`Restart=on-failure` + `RestartSec`, bounded by
+  `StartLimitBurst`), not an ordering dependency. `Restart=` *is* honoured for
+  `Type=oneshot` — verified; only `always`/`on-success` are rejected there.
 - **`covey-sync.path` watches only the top level of `~/Covey`.** New and removed
   sites are caught; edits to a site's `.covey` or `composer.json` are not. Run
   `covey sync`.
