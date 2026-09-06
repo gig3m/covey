@@ -260,21 +260,47 @@ cmd_trust() {
 
 cmd_doctor() { core doctor "$@"; }
 
-cmd_start()   { systemctl --user start covey.target; cmd_status; }
-cmd_stop()    { systemctl --user stop covey.target covey-caddy.service 'covey-fpm@*.service' || true; }
-cmd_restart() { cmd_stop; cmd_start; }
+# --- up / down --------------------------------------------------------------
+# The whole stack is ~440 MiB resident for a machine that is not doing PHP work
+# today. `covey down` gives it back; `covey up` takes it again. Everything hangs
+# off covey.target with PartOf=, so stopping the target stops caddy, every FPM
+# pool, and the compose services in one step.
+#
+# Both invalidate doctor's cache so the bar widget does not show the old state
+# for up to its refresh interval.
+drop_doctor_cache() { rm -f "$COVEY_RUNTIME/covey/doctor.json"; }
+
+cmd_up() {
+  docker_ok || warn "docker is not available - services (mysql, redis, mailpit) will not start"
+  systemctl --user start covey.target
+  drop_doctor_cache
+  cmd_status
+}
+
+cmd_down() {
+  systemctl --user stop covey.target covey-caddy.service 'covey-fpm@*.service' \
+    covey-services.service covey-sync.path 2>/dev/null || true
+  drop_doctor_cache
+  echo "covey is down"
+}
+
+cmd_restart() { cmd_down >/dev/null; cmd_up; }
 cmd_reload()  { systemctl --user reload covey-caddy.service && echo "caddy reloaded"; }
 
-cmd_status() {
-  printf '%-26s %s\n' "UNIT" "STATE"
-  printf '%-26s %s\n' "covey-caddy.service" "$(systemctl --user is-active covey-caddy.service 2>/dev/null || echo inactive)"
-  local t
-  for t in $(all_tags); do
-    systemctl --user is-active --quiet "covey-fpm@$t.service" && \
-      printf '%-26s %s\n' "covey-fpm@$t.service" "active"
-  done
-  printf '%-26s %s\n' "covey-sync.path" "$(systemctl --user is-active covey-sync.path 2>/dev/null || echo inactive)"
-  printf '%-26s %s\n' "covey-services.service" "$(systemctl --user is-active covey-services.service 2>/dev/null || echo inactive)"
+cmd_status() { core status "$@"; }
+
+# Whether the stack comes back at login. `covey down` is deliberately session
+# only - it stops what is running now and leaves this setting alone.
+cmd_autostart() {
+  case "${1:-status}" in
+    on)  systemctl --user enable covey.target >/dev/null 2>&1 && echo "covey will start at login" ;;
+    off) systemctl --user disable covey.target >/dev/null 2>&1 && echo "covey will not start at login" ;;
+    status)
+      if systemctl --user is-enabled --quiet covey.target 2>/dev/null
+      then echo "on  (covey starts at login)"
+      else echo "off (covey does not start at login)"; fi ;;
+    *) die "usage: covey autostart [on|off|status]" ;;
+  esac
 }
 
 cmd_sites() {
@@ -305,10 +331,11 @@ usage() {
 covey - local PHP development environment
 
   covey install              render config, link systemd units and agent skill
-  covey start|stop|restart   bring the environment up or down
+  covey up|down|restart      bring the whole stack up or down (start|stop alias)
+  covey autostart [on|off]   whether the stack starts at login
   covey sync                 regenerate site config from $COVEY_SITES, reload
   covey reload               reload the web server config
-  covey status               show unit state
+  covey status               stack state, unit state and memory in use
   covey doctor [--json]      check the platform and every site
   covey trust                trust the local CA in the system and browser stores
   covey sites                list sites, their PHP version and URLs
@@ -324,9 +351,10 @@ EOF
 
 case "${1:-}" in
   install) shift; cmd_install "$@" ;;
-  start)   shift; cmd_start "$@" ;;
-  stop)    shift; cmd_stop "$@" ;;
+  up|start)   shift; cmd_up "$@" ;;
+  down|stop)  shift; cmd_down "$@" ;;
   restart) shift; cmd_restart "$@" ;;
+  autostart) shift; cmd_autostart "$@" ;;
   reload)  shift; cmd_reload "$@" ;;
   sync)    shift; cmd_sync "$@" ;;
   php)     shift; cmd_php "$@" ;;

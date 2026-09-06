@@ -26,6 +26,7 @@ tells you why.
 - [How it works](#how-it-works)
 - [PHP versions](#php-versions)
 - [Services](#services)
+- [Up and down](#up-and-down)
 - [Certificates](#certificates)
 - [`covey doctor`](#covey-doctor)
 - [Status bar](#status-bar)
@@ -81,7 +82,7 @@ Then enable the extension set, trust the local CA, and start:
 ```bash
 covey php configure 85   # Arch enables almost no PHP extensions by default
 covey trust              # local CA into the system *and* browser stores
-covey start
+covey up
 ```
 
 Verify:
@@ -95,8 +96,9 @@ covey doctor
 | Command | Does |
 |---|---|
 | `covey install` | Render config, link systemd units and the agent skill |
-| `covey start` / `stop` / `restart` | Bring the whole environment up or down |
-| `covey status` | Unit state |
+| `covey up` / `down` / `restart` | Bring the whole stack up or down (`start`/`stop` are aliases) |
+| `covey autostart [on\|off]` | Whether the stack starts at login |
+| `covey status` | Stack state, unit state, and memory in use |
 | `covey doctor [--json]` | Check the platform and every site |
 | `covey sites` | List sites, their PHP version and URLs |
 | `covey sync` | Regenerate site config from `~/Covey`, reload |
@@ -194,6 +196,62 @@ unchanged**:
 Databases are created explicitly with `covey db create <name>` — covey does not
 provision them behind your back.
 
+## Up and down
+
+The whole stack — Caddy, an FPM pool per PHP version in use, and four
+containers — is a few hundred megabytes resident. On a day that is not a PHP
+day, hand it back:
+
+```console
+$ covey status
+STACK    running  (437 MiB)
+
+UNIT                       STATE      MEMORY
+covey-caddy.service        active       84 MiB
+covey-fpm@85.service       active       43 MiB
+covey-fpm@83.service       active       41 MiB
+covey-sync.path            active            -
+covey-services.service     active            -
+
+CONTAINER                  MEMORY
+covey-mysql-1               171 MiB
+covey-postgres-1             50 MiB
+covey-redis-1                28 MiB
+covey-mailpit-1              21 MiB
+
+$ covey down
+covey is down
+```
+
+`covey up` brings it back. Both are one step because every unit is `PartOf=`
+`covey.target`; stopping the target stops the web server, every pool, and the
+compose services together.
+
+**A stopped stack is not a broken one.** `covey doctor` derives its `state`
+(`up`, `degraded`, `down`) from the target, and while covey is down it runs only
+the static checks — what is installed and configured — and skips the runtime
+ones. It does not report eight failures, each with a fix telling you to start
+what you just stopped:
+
+```console
+$ covey doctor
+STACK    stopped
+
+PLATFORM
+  ok   php-8.5          8.5.9
+  ok   extensions-8.5
+  ok   browser-trust    local CA in NSS store
+...
+covey is stopped - run `covey up` to start it
+```
+
+`covey down` is **session only**: it stops what is running now and leaves the
+login behaviour alone. `covey autostart off` is the separate, persistent choice.
+
+Container memory costs a ~2s `docker stats` sample, so it is measured only where
+you asked for it — `covey status` and `covey doctor --json --resources` — never
+on the path the bar widget polls.
+
 ## Certificates
 
 `covey trust` installs the local CA into **both** the system trust store and the
@@ -249,17 +307,22 @@ links it; enable it with:
 omarchy plugin enable covey
 ```
 
-One icon: normal while every check passes, red when any fails. Clicking opens a
-flyout listing every site under management with its state — PHP version when
-healthy, a short problem label when not. Clicking a site opens it in the browser.
+One icon: normal while every check passes, red when any fails, dimmed while the
+stack is deliberately down. Clicking opens a flyout listing every site under
+management with its state — PHP version when healthy, a short problem label when
+not — and a row that takes the stack up or down. Clicking a site opens it in the
+browser.
 
 ```
-Sites                          php 8.5, 8.3
+SITES                          php 8.5, 8.3
 ● southsidechurch                       8.5
 ● stack                                 8.5
 ● needsdb                       no database
+Stack running                        Stop →
 All checks passed              Full report →
 ```
+
+`omarchy-shell covey up` and `... down` do the same thing without a mouse.
 
 It is a **renderer over `covey doctor --json`**, not a second source of truth.
 

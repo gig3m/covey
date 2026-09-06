@@ -11,6 +11,12 @@ passes and `1` when anything fails.
 
     {
       "ok": false,
+      "state": "up",            // up | degraded | down - check this first
+      "resources": {            // memory the stack is using
+        "units":      [ {"name": "covey-caddy.service", "bytes": 88088576}, ... ],
+        "containers": null,     // only measured with --resources (costs ~2s)
+        "bytes": 170000000      // total of what was measured
+      },
       "platform": [ <check>, ... ],
       "sites": [
         { "name": "pub", "url": "https://pub.localhost", "path": "...",
@@ -33,14 +39,33 @@ try to execute a `hint`. Branch on `problem`, not on `detail`.
 
 `--cached [ttl]` serves a recent result (default 10s) instead of re-running
 the HTTP checks. Use it for polling; use the uncached form when you have just
-changed something and need current truth.
+changed something and need current truth. `--resources` additionally samples
+container memory, which costs ~2s - leave it off unless you need the figure.
+
+## `state` comes before the checks
+
+`state` says whether the stack is meant to be running:
+
+| `state` | Meaning | What to do |
+|---|---|---|
+| `up` | `covey.target` is active and everything under it is running | Read the checks normally |
+| `degraded` | The target is active but caddy, a pool, or the services are not | A real failure - follow the `fix` |
+| `down` | The target is stopped, i.e. someone ran `covey down` | Run `covey up`. Do not diagnose. |
+
+While `state` is `down`, doctor runs only the **static** checks - PHP providers,
+extensions, browser trust, and each project's composer platform requirements -
+and skips the runtime ones (caddy, FPM pools, service ports, HTTPS, database
+existence). It exits 0, because a stopped stack is not a broken one.
+
+So a site that "is not loading" while `state` is `down` needs `covey up`, not a
+diagnosis. Check `state` before reading `ok`.
 
 ## Problem codes
 
 | `problem` | Meaning | Fix |
 |---|---|---|
-| `caddy_inactive` | Web server not running | `covey start` |
-| `pool_inactive` | FPM pool for a needed version is down | `covey start` |
+| `caddy_inactive` | Web server not running | `covey up` |
+| `pool_inactive` | FPM pool for a needed version is down | `covey up` |
 | `provider_not_installed` | A site wants a PHP covey knows but hasn't installed | `covey php install <tag>` (root) |
 | `no_provider` | A site wants a PHP covey has no provider row for | none - add a row to `share/providers.tsv` |
 | `extensions_missing` | Extensions are not enabled for that provider | `covey php configure <tag>` (root) |
@@ -62,6 +87,10 @@ or `APP_KEY`, unwritable `storage/`, stale `vendor/`, or a framework error.
 Report these to the user; do not expect a covey command to fix them.
 
 ## Common situations
+
+**Nothing on `.localhost` responds and `covey doctor` says all checks passed.**
+Look at `state`. If it is `down`, covey is stopped - `covey up`. Doctor is not
+wrong; it skipped the runtime checks on purpose.
 
 **A brand-new site's first request fails TLS, then works.** Normal - the
 certificate is issued on the first handshake. Retry once.

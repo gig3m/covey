@@ -44,6 +44,14 @@ both the shell and PHP sides. Adding a PHP version is one row in the TSV.
 terminal output, `--json`, and the omarchy bar widget all render it. The bar is
 a renderer, never a second source of truth.
 
+**A stopped stack is a state, not a failure.** `covey doctor` derives `state`
+(`up` / `degraded` / `down`) from whether `covey.target` is active, and while it
+is down runs only the *static* checks, skipping caddy, pools, service ports,
+HTTPS and database existence. Without this, `covey down` produced eight red
+failures each carrying a `fix.cmd` telling an agent to start what the user had
+just stopped. Derive the state from systemd, never from a marker file - a marker
+is a second source of truth and will drift.
+
 **The `fix` / `hint` contract.** A failing check carries `fix.cmd` only when it
 is a runnable command. When nothing can fix it automatically, it carries `hint`
 (prose) and no `fix`. An agent must be able to execute any `fix.cmd` blindly.
@@ -86,6 +94,21 @@ environment.
   registers (the shell logs a benign duplicate-handler warning). After changing
   the widget's IPC surface, `omarchy restart shell` — a plugin rescan alone can
   keep the stale handler.
+- **`BarWidget.broadcast(method)` calls the method with no arguments**, on every
+  monitor's instance. So a broadcast target must take none, and anything with a
+  side effect (running `covey up`) must happen *once*, outside the broadcast —
+  otherwise a two-monitor bar runs it twice.
+- **A QML property-assignment type error aborts the rest of the function.**
+  `root.stackState = st`, where `st` had been shadowed by a later `var st`, threw
+  `Cannot assign QJSValue to QString`, and every assignment after it — including
+  `root.sites` — silently never ran, so the flyout showed "No sites yet" against
+  a perfectly good doctor model on disk. `var` is function-scoped in QML's JS: a
+  loop variable further down the function is the *same* variable. Check
+  `journalctl --user | grep BarWidget` when the widget renders stale nonsense.
+- **`docker stats --no-stream` costs ~2s per call.** That is why container memory
+  is measured only behind `--resources`, never on the path the bar polls.
+  systemd's `MemoryCurrent` is a free property read, and one `systemctl show`
+  covers every unit at once.
 - **Bar styling must follow the shell**: bind `font.family` to the bar's
   `fontFamily`, falling back to `Style.font.family` (the fontconfig `monospace`
   alias). Never bind to `Style.font.resolvedFamily` — that exists only for
@@ -95,6 +118,8 @@ environment.
 
     covey doctor            # exit 0 = healthy, 1 = something failed
     covey doctor --json     # the model itself
+    covey status            # stack state, unit state, memory in use
+    covey down && covey doctor   # must read as stopped, exit 0, no fixes offered
 
 Test failure paths, not just the happy path — the whole point of covey is that
 breakage is legible. Cheap ways to force one:

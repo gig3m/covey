@@ -3,7 +3,7 @@
 // Both `covey sync` and `covey doctor` go through here so they cannot disagree.
 //
 // usage: core.php resolve <site-dir>
-//        core.php doctor [--json]
+//        core.php doctor [--json] [--resources]
 
 const OK = true;
 
@@ -156,6 +156,26 @@ function unit_active(string $u): bool {
     exec('systemctl --user is-active --quiet ' . escapeshellarg($u), $o, $rc);
     return $rc === 0;
 }
+
+// The target *is* the stack: `covey down` stops it, `covey up` starts it. An
+// inactive target therefore means "stopped on purpose", not "broken", and
+// doctor must not report eight red failures (each with a fix telling an agent
+// to start it again) for a stack the user deliberately took down. Deriving
+// this from systemd rather than a marker file keeps it from drifting.
+function stack_live(): bool { return unit_active('covey.target'); }
+
+// Problems that mean the platform is not running, as opposed to not correct.
+// These are what separate `degraded` from a merely failing check.
+const RUNTIME_PROBLEMS = ['caddy_inactive', 'pool_inactive', 'service_down', 'docker_unavailable'];
+
+// The PHP versions this machine's sites actually ask for.
+function needed_tags(): array {
+    global $DEFAULT;
+    $n = [];
+    foreach (sites() as $d) $n[resolve_site($d)['tag']] = true;
+    if (!$n) $n[$DEFAULT] = true;
+    return array_keys($n);
+}
 function port_open(string $host, int $port, float $t = 1.5): bool {
     $s = @fsockopen($host, $port, $e, $es, $t);
     if ($s) { fclose($s); return true; }
@@ -166,18 +186,19 @@ function chk(string $name, bool $ok, array $extra = []): array {
 }
 function fix(string $cmd, bool $root = false): array { return ['cmd'=>$cmd, 'needs_root'=>$root]; }
 
-function platform_checks(): array {
-    global $DEFAULT;
+// $live says whether the stack is meant to be running. When it is not, only
+// the static checks are run - what is installed and configured is still worth
+// knowing while covey is down; what is listening on a port is not.
+function platform_checks(bool $live): array {
     $c = [];
-    $c[] = unit_active('covey-caddy.service')
-        ? chk('caddy', OK)
-        : chk('caddy', false, ['problem'=>'caddy_inactive','detail'=>'web server is not running',
-                               'fix'=>fix('covey start')]);
+    if ($live) {
+        $c[] = unit_active('covey-caddy.service')
+            ? chk('caddy', OK)
+            : chk('caddy', false, ['problem'=>'caddy_inactive','detail'=>'web server is not running',
+                                   'fix'=>fix('covey up')]);
+    }
 
-    $needed = [];
-    foreach (sites() as $n => $d) $needed[resolve_site($d)['tag']] = true;
-    if (!$needed) $needed[$DEFAULT] = true;
-    foreach (array_keys($needed) as $tag) {
+    foreach (needed_tags() as $tag) {
         $p = provider($tag);
         $series = $p['series'] ?? $tag;
         if (!tag_installed($tag)) {
@@ -186,10 +207,14 @@ function platform_checks(): array {
                 'fix'=>fix("covey php install $tag", true)]);
             continue;
         }
-        $c[] = unit_active("covey-fpm@$tag.service")
-            ? chk("php-$series", OK, ['detail'=>tag_version($tag)])
-            : chk("php-$series", false, ['problem'=>'pool_inactive',
-                'detail'=>"FPM pool for $series is not running", 'fix'=>fix('covey start')]);
+        if (!$live) {
+            $c[] = chk("php-$series", OK, ['detail'=>tag_version($tag)]);
+        } else {
+            $c[] = unit_active("covey-fpm@$tag.service")
+                ? chk("php-$series", OK, ['detail'=>tag_version($tag)])
+                : chk("php-$series", false, ['problem'=>'pool_inactive',
+                    'detail'=>"FPM pool for $series is not running", 'fix'=>fix('covey up')]);
+        }
 
         $missing = [];
         $loaded = strtolower((string)@shell_exec(escapeshellarg($p['php']) . ' -m 2>/dev/null'));
@@ -215,6 +240,8 @@ function platform_checks(): array {
             'detail'=>'no NSS store; browsers will reject the certificate',
             'fix'=>fix('covey trust', true)]);
     }
+
+    if (!$live) return $c;
 
     exec('docker info >/dev/null 2>&1', $o, $rc);
     if ($rc !== 0) {
@@ -297,7 +324,7 @@ function platform_reqs_check(string $dir, string $tag): ?array {
     return chk('platform-reqs', false, $extra);
 }
 
-function site_report(string $name, string $dir): array {
+function site_report(string $name, string $dir, bool $live): array {
     $r = resolve_site($dir);
     $p = provider($r['tag']);
     $checks = [];
@@ -324,10 +351,10 @@ function site_report(string $name, string $dir): array {
     $pr = platform_reqs_check($dir, $r['tag']);
     if ($pr !== null) $checks[] = $pr;
 
-    $checks[] = http_check($name);
+    if ($live) $checks[] = http_check($name);
 
     $cf = covey_file($dir);
-    if (!empty($cf['database'])) {
+    if ($live && !empty($cf['database'])) {
         $e = db_exists($cf['database']);
         $checks[] = $e === true
             ? chk('database', OK, ['detail'=>$cf['database']])
@@ -346,14 +373,134 @@ function site_report(string $name, string $dir): array {
             'checks'=>$checks];
 }
 
-function doctor(): array {
-    $platform = platform_checks();
+// ---- resources -------------------------------------------------------------
+// What the stack costs to leave running. systemd's MemoryCurrent is a free
+// property read; `docker stats` needs a ~2s sample per call, so containers are
+// only measured when asked for (`covey status`, `doctor --resources`) and never
+// on the path the bar widget polls.
+function unit_memory(array $units): array {
+    if (!$units) return [];
+    $out = (string)@shell_exec('systemctl --user show -p Id -p MemoryCurrent '
+        . implode(' ', array_map('escapeshellarg', $units)) . ' 2>/dev/null');
+    $res = []; $id = null;
+    foreach (explode("\n", $out) as $line) {
+        if (str_starts_with($line, 'Id=')) { $id = substr($line, 3); continue; }
+        if (str_starts_with($line, 'MemoryCurrent=') && $id !== null) {
+            $v = substr($line, 14);
+            $res[] = ['name'=>$id, 'bytes'=>ctype_digit($v) ? (int)$v : null];
+            $id = null;
+        }
+    }
+    return $res;
+}
+
+// "170.5MiB" -> bytes. docker stats reports no raw figure.
+function human_bytes(string $s): ?int {
+    if (!preg_match('/^([0-9.]+)\s*([KMGT]?i?B)$/i', trim($s), $m)) return null;
+    $mult = ['B'=>1, 'KIB'=>1024, 'MIB'=>1048576, 'GIB'=>1073741824, 'TIB'=>1099511627776,
+             'KB'=>1000, 'MB'=>1000000, 'GB'=>1000000000, 'TB'=>1000000000000];
+    $u = strtoupper($m[2]);
+    return isset($mult[$u]) ? (int)round((float)$m[1] * $mult[$u]) : null;
+}
+
+function container_memory(): array {
+    $out = (string)@shell_exec('docker stats --no-stream --format '
+        . escapeshellarg('{{.Name}}\t{{.MemUsage}}') . ' 2>/dev/null');
+    $res = [];
+    foreach (explode("\n", $out) as $line) {
+        $f = explode("\t", $line);
+        if (count($f) < 2 || !str_starts_with($f[0], 'covey-')) continue;
+        $res[] = ['name'=>$f[0], 'bytes'=>human_bytes(explode('/', $f[1])[0])];
+    }
+    return $res;
+}
+
+function resources(bool $live, bool $containers): array {
+    $units = [];
+    if ($live) {
+        // Every provider, not just the needed ones: a pool can still be running
+        // for a site that has since gone away, and it is still using memory.
+        $u = ['covey-caddy.service'];
+        foreach (array_keys(providers()) as $t) $u[] = "covey-fpm@$t.service";
+        $units = array_values(array_filter(unit_memory($u), fn($r) => $r['bytes'] !== null));
+    }
+    $cs = ($live && $containers) ? container_memory() : [];
+    $total = 0;
+    foreach (array_merge($units, $cs) as $r) $total += (int)($r['bytes'] ?? 0);
+    return ['units'=>$units, 'containers'=>$containers ? $cs : null, 'bytes'=>$total];
+}
+
+function doctor(bool $containers = false): array {
+    $live = stack_live();
+    $platform = platform_checks($live);
     $sites = [];
-    foreach (sites() as $n => $d) $sites[] = site_report($n, $d);
-    $ok = true;
-    foreach ($platform as $c) if (!$c['ok']) $ok = false;
+    foreach (sites() as $n => $d) $sites[] = site_report($n, $d, $live);
+    $ok = true; $degraded = false;
+    foreach ($platform as $c) if (!$c['ok']) {
+        $ok = false;
+        if (in_array($c['problem'] ?? '', RUNTIME_PROBLEMS, true)) $degraded = true;
+    }
     foreach ($sites as $s) foreach ($s['checks'] as $c) if (!$c['ok']) $ok = false;
-    return ['ok'=>$ok, 'platform'=>$platform, 'sites'=>$sites];
+    return ['ok'=>$ok,
+            'state'=>!$live ? 'down' : ($degraded ? 'degraded' : 'up'),
+            'resources'=>resources($live, $containers),
+            'platform'=>$platform, 'sites'=>$sites];
+}
+
+// ---- status ----------------------------------------------------------------
+// A cheap runtime-only view: what is running and what it costs. Deliberately
+// not doctor - no HTTP, no composer, no correctness. `covey status` answers
+// "is it up and what is it costing me", `covey doctor` answers "is it right".
+function status(bool $containers = true): array {
+    $live = stack_live();
+    $needed = array_flip(needed_tags());
+    $names = ['covey-caddy.service'];
+    foreach (array_keys(providers()) as $t) {
+        $u = "covey-fpm@$t.service";
+        if (isset($needed[$t]) || unit_active($u)) $names[] = $u;
+    }
+    $names[] = 'covey-sync.path';
+    $names[] = 'covey-services.service';
+
+    $mem = [];
+    foreach (unit_memory($names) as $r) $mem[$r['name']] = $r['bytes'];
+    $units = [];
+    foreach ($names as $u)
+        $units[] = ['name'=>$u, 'active'=>unit_active($u), 'bytes'=>$mem[$u] ?? null];
+
+    $cs = ($live && $containers) ? container_memory() : [];
+    $total = 0;
+    foreach ($units as $r) $total += (int)($r['bytes'] ?? 0);
+    foreach ($cs as $r) $total += (int)($r['bytes'] ?? 0);
+
+    $degraded = false;
+    if ($live) foreach ($units as $r)
+        if (!$r['active'] && $r['name'] !== 'covey-sync.path') $degraded = true;
+
+    return ['state'=>!$live ? 'down' : ($degraded ? 'degraded' : 'up'),
+            'units'=>$units, 'containers'=>$containers ? $cs : null, 'bytes'=>$total];
+}
+
+function render_status(array $d): int {
+    $tty = function_exists('posix_isatty') && @posix_isatty(STDOUT) && getenv('NO_COLOR') === false;
+    $note = ['up'=>'running', 'degraded'=>'partly running', 'down'=>'stopped'][$d['state']] ?? $d['state'];
+    if ($d['bytes'] > 0) $note .= '  (' . mib($d['bytes']) . ')';
+    if ($tty) $note = ($d['state'] === 'down' ? "\033[2m" : ($d['state'] === 'up' ? "\033[32m" : "\033[31m"))
+                    . $note . "\033[0m";
+    printf("STACK    %s\n\n", $note);
+
+    printf("%-26s %-10s %s\n", 'UNIT', 'STATE', 'MEMORY');
+    foreach ($d['units'] as $u)
+        printf("%-26s %-10s %8s\n", $u['name'], $u['active'] ? 'active' : 'inactive',
+               $u['bytes'] === null ? '-' : mib($u['bytes']));
+
+    if ($d['containers']) {
+        printf("\n%-26s %s\n", 'CONTAINER', 'MEMORY');
+        foreach ($d['containers'] as $c)
+            printf("%-26s %8s\n", $c['name'], $c['bytes'] === null ? '-' : mib($c['bytes']));
+    }
+    if ($d['state'] === 'down') echo "\ncovey is stopped - run `covey up` to start it\n";
+    return $d['state'] === 'up' ? 0 : 1;
 }
 
 // ---- renderers -------------------------------------------------------------
@@ -374,6 +521,13 @@ function render_human(array $d): int {
             printf("       %s\n", $c['hint']);
         }
     };
+    $state = $d['state'] ?? 'up';
+    $mem = (int)($d['resources']['bytes'] ?? 0);
+    $note = ['up'=>'running', 'degraded'=>'partly running', 'down'=>'stopped'][$state] ?? $state;
+    if ($state === 'up' && $mem > 0) $note .= sprintf('  (%s)', mib($mem));
+    printf("STACK    %s\n\n", $tty ? ($state === 'down' ? "\033[2m$note\033[0m"
+                                       : ($state === 'up' ? "\033[32m$note\033[0m" : "\033[31m$note\033[0m"))
+                                     : $note);
     echo "PLATFORM\n";
     foreach ($d['platform'] as $c) $line($c);
     foreach ($d['sites'] as $s) {
@@ -381,9 +535,14 @@ function render_human(array $d): int {
         foreach ($s['checks'] as $c) $line($c);
     }
     if (!$d['sites']) echo "\n(no sites)\n";
-    echo "\n" . ($d['ok'] ? "all checks passed\n" : "some checks failed\n");
+    // A stopped stack is not a broken one: say so, and do not claim the checks
+    // that were skipped passed.
+    if ($state === 'down') echo "\ncovey is stopped - run `covey up` to start it\n";
+    else echo "\n" . ($d['ok'] ? "all checks passed\n" : "some checks failed\n");
     return $d['ok'] ? 0 : 1;
 }
+
+function mib(int $b): string { return sprintf('%.0f MiB', $b / 1048576); }
 
 // ---- entry -----------------------------------------------------------------
 $cmd = $argv[1] ?? 'doctor';
@@ -392,6 +551,15 @@ if ($cmd === 'resolve') {
     if ($dir === '' || !is_dir($dir)) { fwrite(STDERR, "core.php resolve <site-dir>\n"); exit(2); }
     echo resolve_site($dir)['tag'];
     exit(0);
+}
+if ($cmd === 'status') {
+    // Containers cost a ~2s `docker stats` sample; --no-containers skips it.
+    $d = status(!in_array('--no-containers', $argv, true));
+    if (in_array('--json', $argv, true)) {
+        echo json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+        exit($d['state'] === 'up' ? 0 : 1);
+    }
+    exit(render_status($d));
 }
 if ($cmd === 'doctor') {
     // --cached [ttl]: serve a recent result instead of re-running HTTP checks.
@@ -408,7 +576,7 @@ if ($cmd === 'doctor') {
             exit(render_human($prev));
         }
     }
-    $d = doctor();
+    $d = doctor(in_array('--resources', $argv, true));
     if ($cached) {
         @mkdir(dirname($cacheFile), 0700, true);
         @file_put_contents($cacheFile, json_encode($d, JSON_UNESCAPED_SLASHES) . "\n");
@@ -419,5 +587,5 @@ if ($cmd === 'doctor') {
     }
     exit(render_human($d));
 }
-fwrite(STDERR, "usage: core.php [resolve <dir>|doctor [--json]]\n");
+fwrite(STDERR, "usage: core.php [resolve <dir>|doctor [--json] [--resources]|status [--json]]\n");
 exit(2);

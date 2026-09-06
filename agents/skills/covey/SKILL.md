@@ -4,9 +4,11 @@ description: >
   Manage the covey local PHP development environment on this machine.
   Use for: serving a project at a .localhost URL, starting/stopping the local
   web server or PHP-FPM, listing local sites, diagnosing why a .localhost site
-  is not loading, PHP version selection for a site, and local MySQL/Redis/Mailpit.
+  is not loading, PHP version selection for a site, local MySQL/Redis/Mailpit,
+  and taking the whole stack down to free memory.
   Triggers: covey, .localhost site, local dev server, "site won't load",
-  php-fpm, local php version, mailpit, laravel local environment, ~/Covey.
+  php-fpm, local php version, mailpit, laravel local environment, ~/Covey,
+  "shut down covey", "free up memory", covey up, covey down.
 ---
 
 # Covey Skill
@@ -24,10 +26,11 @@ user - do not expect covey to fix it, and do not use covey commands to try.
 ## Commands
 
     covey install            render config, link systemd units and this skill
-    covey start|stop|restart bring the environment up or down
+    covey up|down|restart    bring the whole stack up or down (start|stop alias)
+    covey autostart on|off   whether the stack starts at login
     covey sync               regenerate site config from ~/Covey, then reload
     covey reload             reload the web server config
-    covey status             show unit state
+    covey status             stack state, unit state and memory in use
     covey doctor [--json]    check the platform and every site
     covey trust              trust the local CA (system + browser stores)
     covey sites              list sites, their PHP version and URLs
@@ -130,6 +133,29 @@ Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
 Databases are **not** created automatically - creating one is an explicit
 action: `covey db create <name>`.
 
+## Up and down
+
+The stack is a few hundred megabytes resident (Caddy, one FPM pool per PHP
+version in use, four containers). `covey down` gives it back, `covey up` takes
+it again. Everything is `PartOf=covey.target`, so one step covers all of it.
+
+`covey status` shows what is running and what it costs. Container memory needs a
+~2s `docker stats` sample; pass `--no-containers` to skip it.
+
+**A stopped stack is not a broken one.** `covey doctor` reports
+`state: "up" | "degraded" | "down"`, derived from whether `covey.target` is
+active. While covey is down, doctor runs only the **static** checks (which PHP
+is installed, which extensions are loaded, browser trust, the project's own
+composer platform requirements) and skips the runtime ones (caddy, FPM pools,
+service ports, HTTPS, database existence). It exits 0.
+
+So: **before reporting that a site is broken, check `state`.** If it is `down`,
+the answer is `covey up`, not a diagnosis. `degraded` means the target is up but
+something under it is not - that is a real failure.
+
+`covey down` is session only. `covey autostart off` is the separate, persistent
+choice about login.
+
 ## Bar module
 
 covey ships an omarchy-shell bar widget (`share/omarchy/covey/`), symlinked
@@ -137,14 +163,16 @@ into `~/.config/omarchy/plugins/covey` by `covey install`. Enable it with
 `omarchy plugin enable covey`.
 
 It polls `covey doctor --json --cached` and shows one icon: normal while every
-check passes, `Color.urgent` when any fails. Hovering shows a one-line summary.
+check passes, `Color.urgent` when any fails, dimmed to 45% opacity while the
+stack is deliberately down. Hovering shows a one-line summary.
 
 **Clicking opens a flyout** listing every site under management:
 
-    Sites                          php 8.5, 8.3
+    SITES                          php 8.5, 8.3
     ● southsidechurch                       8.5
     ● stack                                 8.5
     ● needsdb                       no database
+    Stack running                        Stop →
     All checks passed              Full report →
 
 A healthy site shows its PHP version; a failing one shows a short state label
@@ -160,6 +188,8 @@ IPC methods (via `omarchy-shell covey <method>`):
 
     omarchy-shell covey refresh    re-poll doctor now
     omarchy-shell covey toggle     open/close the flyout
+    omarchy-shell covey up         bring the stack up
+    omarchy-shell covey down       take the stack down
 
 Styling follows the shell rather than Qt defaults: every `Text` binds
 `font.family` to the bar's `fontFamily` (falling back to `Style.font.family`,
@@ -203,7 +233,8 @@ the fix for anything broken. `covey doctor --json` gives the same result as
 structured data (exit 0 = all passed, 1 = something failed); see
 [`troubleshooting.md`](troubleshooting.md) for the schema and problem codes.
 
-Then `covey status` and `covey logs caddy`.
+Then `covey status` and `covey logs caddy`. If `covey status` says the stack is
+stopped, that is the whole answer - run `covey up`.
 
 - **First request to a brand-new site fails TLS**, then succeeds: normal.
   The certificate is issued on first handshake (~1s). Retry.

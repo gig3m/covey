@@ -5,8 +5,13 @@ import qs.Commons
 import qs.Ui
 
 // The bar shows one colour: green while every site's platform requirements are
-// met, red the moment one is not. Clicking opens a flyout listing the sites
-// under management with their state.
+// met, red the moment one is not, and dimmed when the stack is deliberately
+// down. Clicking opens a flyout listing the sites under management with their
+// state, and a control to bring the stack up or down.
+//
+// Memory figures are not shown here on purpose: measuring the containers costs
+// a ~2s `docker stats` sample, which is far too expensive for something polled
+// every 15 seconds. `covey status` is where that question gets answered.
 //
 // Everything here comes from `covey doctor --json` - the same model the CLI and
 // any agent read. This widget is a renderer, not a second source of truth.
@@ -17,6 +22,9 @@ BarWidget {
   property bool healthy: true
   property bool known: false
   property int failures: 0
+  property string stackState: "up"   // up | degraded | down
+  property bool acting: false        // an up/down is in flight
+  property string actedFrom: ""
   property var sites: []            // [{name, url, php, ok, state}]
   property var platformIssues: []   // [{check, detail}]
   property string phpSummary: ""
@@ -77,6 +85,13 @@ BarWidget {
       return
     }
 
+    // An up/down takes seconds (docker compose --wait). Stop treating the
+    // widget as in-flight as soon as the state we acted away from is gone.
+    // Named `stackSt`, not `st`: the site loop below declares its own `st`,
+    // and `var` is function-scoped, so the two would be the same variable.
+    var stackSt = d.state ? String(d.state) : "up"
+    if (root.acting && stackSt !== root.actedFrom) root.acting = false
+
     var issues = []
     for (var i = 0; i < d.platform.length; i++) {
       var pc = d.platform[i]
@@ -94,14 +109,35 @@ BarWidget {
     }
 
     root.known = true
+    root.stackState = stackSt
     root.sites = list
     root.platformIssues = issues
     root.phpSummary = Object.keys(versions).sort().join(", ")
     root.failures = issues.length + list.filter(function (x) { return !x.ok }).length
     root.healthy = d.ok === true
-    root.tooltip = root.failures === 0
-      ? "covey — " + list.length + " site" + (list.length === 1 ? "" : "s") + ", all checks passed"
-      : "covey — " + root.failures + " problem" + (root.failures === 1 ? "" : "s") + " (click for detail)"
+    root.tooltip = stackSt === "down"
+      ? "covey — stopped (click to start)"
+      : (root.failures === 0
+        ? "covey — " + list.length + " site" + (list.length === 1 ? "" : "s") + ", all checks passed"
+        : "covey — " + root.failures + " problem" + (root.failures === 1 ? "" : "s") + " (click for detail)")
+  }
+
+  // Bring the stack up or down. covey drops doctor's cache on both, so the
+  // follow-up polls see the new state rather than the cached old one.
+  //
+  // The command runs exactly once - on the instance that was clicked, or the
+  // one instance whose IPC handler registered - and only the in-flight marker
+  // is broadcast, so a two-monitor bar does not run `covey up` twice.
+  function setStack(up) {
+    Quickshell.execDetached([root.coveyBin, up ? "up" : "down"])
+    root.broadcast("markActing")
+  }
+
+  // Zero-argument, because broadcast() calls its method with no arguments.
+  function markActing() {
+    root.actedFrom = root.stackState
+    root.acting = true
+    settle.ticks = 0
   }
 
   visible: true
@@ -114,6 +150,22 @@ BarWidget {
     target: "covey"
     function refresh(): void { root.broadcast("refresh") }
     function toggle(): void { root.broadcast("togglePopup") }
+    function up(): void { root.setStack(true) }
+    function down(): void { root.setStack(false) }
+  }
+
+  // Poll faster than the normal interval while an up/down settles, then give up.
+  Timer {
+    id: settle
+    property int ticks: 0
+    interval: 1500
+    repeat: true
+    running: root.acting
+    onTriggered: {
+      ticks++
+      root.refresh()
+      if (ticks > 12) { root.acting = false; ticks = 0 }
+    }
   }
 
   Process {
@@ -149,7 +201,11 @@ BarWidget {
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.tooltip
-    active: !root.healthy
+    // A stopped stack is not a problem, so it dims rather than turning red.
+    // Opacity rather than a darker colour: `Qt.darker` reads as *more*
+    // prominent against a light theme's dark foreground.
+    opacity: root.stackState === "down" || root.acting ? 0.45 : 1.0
+    active: !root.healthy && root.stackState !== "down" && !root.acting
     useActiveColor: true
     activeColor: Color.urgent
     onPressed: root.popupOpen = !root.popupOpen
@@ -184,7 +240,8 @@ BarWidget {
         Text {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          text: root.phpSummary ? "php " + root.phpSummary : ""
+          text: root.stackState === "down" ? "stopped"
+              : (root.phpSummary ? "php " + root.phpSummary : "")
           color: Qt.darker(Color.popups.text, 1.4)
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
@@ -272,15 +329,57 @@ BarWidget {
 
       PanelSeparator { width: parent.width }
 
+      // The stack control. Leaving covey running costs a few hundred MiB, so
+      // this is the switch for a day that is not a PHP day. `covey status` has
+      // the figure; this just flips it.
+      Item {
+        width: parent.width
+        height: Style.space(22)
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.acting ? "Working\u2026"
+              : root.stackState === "down" ? "Stack stopped"
+              : root.stackState === "degraded" ? "Stack partly running"
+              : "Stack running"
+          color: root.stackState === "degraded" ? Color.urgent : Color.popups.text
+          font.family: root.uiFont
+          font.pixelSize: Style.font.bodySmall
+        }
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.right: parent.right
+          visible: !root.acting
+          text: root.stackState === "down" ? "Start \u2192" : "Stop \u2192"
+          color: Qt.darker(Color.popups.text, 1.3)
+          font.family: root.uiFont
+          font.pixelSize: Style.font.bodySmall
+        }
+        MouseArea {
+          anchors.fill: parent
+          enabled: !root.acting && root.known
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            root.close()
+            root.setStack(root.stackState === "down")
+          }
+        }
+      }
+
+      PanelSeparator { width: parent.width }
+
       Item {
         width: parent.width
         height: Style.space(20)
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: root.healthy
-            ? "All checks passed"
-            : root.failures + (root.failures === 1 ? " problem" : " problems")
-          color: root.healthy ? Qt.darker(Color.popups.text, 1.4) : Color.urgent
+          text: root.stackState === "down"
+            ? "Runtime checks skipped"
+            : (root.healthy
+              ? "All checks passed"
+              : root.failures + (root.failures === 1 ? " problem" : " problems"))
+          color: (root.healthy || root.stackState === "down")
+            ? Qt.darker(Color.popups.text, 1.4) : Color.urgent
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
         }
