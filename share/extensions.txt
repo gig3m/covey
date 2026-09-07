@@ -1,7 +1,9 @@
 iconv
 bcmath
+gmp
 exif
 intl
+sockets
 mysqli
 pdo_mysql
 sqlite3
