@@ -15,6 +15,8 @@ covey is a Linux answer to [Laravel Herd](https://herd.laravel.com/) — same
 idea, different machine, and built so that when something *doesn't* work it
 tells you why.
 
+![A new directory in ~/Covey showing up in covey sites with its own https URL, and the installed PHP versions](docs/screenshot.png)
+
 ---
 
 ## Contents
