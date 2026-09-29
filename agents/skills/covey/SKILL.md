@@ -94,7 +94,7 @@ has no `pdo_mysql`, so a Laravel app cannot reach MySQL at all.
 `covey php configure <tag>` fixes this per provider: it installs the extension
 packages and writes a managed `conf.d/covey.ini` enabling:
 
-    iconv bcmath exif intl mysqli pdo_mysql sqlite3 pdo_sqlite
+    iconv bcmath gmp exif intl sockets mysqli pdo_mysql sqlite3 pdo_sqlite
     pdo_pgsql pgsql gd sodium igbinary redis
 
 `sqlite3`/`pdo_sqlite` matter because Laravel 11+ defaults to SQLite, and

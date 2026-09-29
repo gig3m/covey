@@ -58,7 +58,7 @@ resolves every `*.localhost` name to loopback, so covey has no `dnsmasq`, no
 - An Arch-based Linux system (`pacman`)
 - A systemd **user** session — everything runs as you, no root daemons
 - `systemd-resolved` (for `*.localhost` resolution)
-- Docker, for the optional MySQL/Redis/Mailpit stack
+- Docker, for the optional MySQL/PostgreSQL/Redis/Mailpit stack
 - `omarchy-shell`, for the optional status-bar widget
 
 ## Install
@@ -107,7 +107,7 @@ covey doctor
 | `covey php list` | Show PHP providers |
 | `covey php install <tag>` | Install a PHP provider |
 | `covey php configure <tag>` | Enable the extension set for a provider |
-| `covey services [up\|down\|status\|logs]` | The MySQL/Redis/Mailpit stack |
+| `covey services [up\|down\|status\|logs]` | The MySQL/PostgreSQL/Redis/Mailpit stack |
 | `covey db [list\|create\|drop\|shell]` | Databases |
 | `covey trust` | Trust the local CA (system + browser stores) |
 | `covey logs [caddy\|php]` | Tail logs |
@@ -122,7 +122,7 @@ covey.target
 ├── covey-caddy.service       Caddy on :80/:443
 ├── covey-fpm@<ver>.service   one FPM pool per PHP version, started on demand
 ├── covey-sync.path           watches ~/Covey, regenerates config
-└── covey-services.service    docker compose: mysql, redis, mailpit
+└── covey-services.service    docker compose: mysql, postgres, redis, mailpit
 ```
 
 Running as your user rather than `http` is deliberate: the FPM pool reads
@@ -173,7 +173,8 @@ and no sqlite at all — a Laravel app cannot reach a database.
 `conf.d/covey.ini` enabling:
 
 ```
-iconv bcmath exif intl mysqli pdo_mysql sqlite3 pdo_sqlite gd sodium igbinary redis
+iconv bcmath gmp exif intl sockets mysqli pdo_mysql sqlite3 pdo_sqlite
+pdo_pgsql pgsql gd sodium igbinary redis
 ```
 
 The single managed file also fixes load order (`igbinary` must precede `redis`).
@@ -330,7 +331,6 @@ Every failing check carries a stable `problem` code and either a runnable
   "problem": "extensions_missing",
   "detail": "pdo_mysql gd",
   "fix": { "cmd": "covey php configure 83", "needs_root": true } }
-}
 ```
 
 Branch on `problem`, never on `detail`. A `hint` is prose — never execute it.
@@ -382,7 +382,7 @@ version or start a service but cannot wander into your source.
 
 covey manages **the platform**. It never modifies files inside a project.
 
-**In:** serving, TLS, PHP versions and extensions, MySQL/Redis/Mailpit,
+**In:** serving, TLS, PHP versions and extensions, MySQL/PostgreSQL/Redis/Mailpit,
 databases on request, and checks for all of the above.
 
 **Out:** `.env`, `APP_KEY`, `storage/` permissions, `composer install`,
