@@ -145,7 +145,7 @@ function sites(): array {
     $out = [];
     foreach (glob("$SITES/*", GLOB_ONLYDIR) ?: [] as $dir) {
         $n = basename($dir);
-        // Dotted names allowed: kylearrington.com -> kylearrington.com.localhost
+        // Dotted names allowed: example.com -> example.com.localhost
         if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/', $n)) continue;
         $out[$n] = $dir;
     }

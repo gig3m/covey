@@ -37,7 +37,7 @@ Linux has no per-TLD hook. Everything else has a direct Linux equivalent.
 ## 2. `.localhost`, not `.test`
 
 `systemd-resolved` already synthesises loopback for anything under `.localhost`
-(RFC 6761), and Chrome and Firefox do too. Verified on the target machine
+(RFC 6761), and Chrome and Firefox do too. Verified on the development machine
 before committing to it:
 
     anything.localhost  → 127.0.0.1   ✓ zero config
@@ -45,7 +45,7 @@ before committing to it:
 
 Choosing `.localhost` **deletes the entire DNS layer**: no dnsmasq, no
 `/etc/hosts` edits, no `systemd-resolved` drop-in, and nothing to break when
-the network changes. That last point was not hypothetical — this machine runs
+the network changes. That last point was not hypothetical — the development machine runs
 Tailscale MagicDNS, exactly the kind of thing a hand-rolled dnsmasq fights.
 
 Cost: `.test` muscle memory from Herd. Accepted deliberately.
@@ -62,7 +62,7 @@ The literal port — real `park` / `link` / `secure` / `isolate` commands, close
 to Herd muscle memory.
 
 **Rejected because** it wants to own nginx and dnsmasq itself, which is what
-would collide with `systemd-resolved` and Tailscale on this machine. Taking a
+would collide with `systemd-resolved` and Tailscale on the development machine. Taking a
 tool that manages system DNS onto a box where two other things already do is
 buying the exact fragility `.localhost` was chosen to avoid.
 
@@ -84,7 +84,7 @@ zero-touch property. It is less code to own.
 
 ### mise for PHP
 
-Very attractive: mise was already the version manager on this machine, and
+Very attractive: mise was already the version manager on the development machine, and
 per-directory `.mise.toml` would have given per-site PHP versions for free.
 
 **Rejected because** both backends (`vfox:jdx/vfox-php`,
@@ -115,9 +115,9 @@ Checking the actual projects changed the shape of the problem:
 
 | repo | `require.php` | Laravel |
 |---|---|---|
-| southsidechurch | `^8.2` | ^12.0 |
-| pub | `^8.3` | ^13.0 |
-| churchmembers | `^8.2` | ^12.0 |
+| app A | `^8.2` | ^12.0 |
+| app B | `^8.3` | ^13.0 |
+| app C | `^8.2` | ^12.0 |
 
 All satisfied by 8.5 today. So this is **not a version-spread problem** —
 nothing needs 7.4 or 8.0 — it is a version-**drift** problem: `^8.2` means

@@ -353,7 +353,7 @@ browser.
 
 ```
 SITES                          php 8.5, 8.3
-● southsidechurch                       8.5
+● shop                                  8.5
 ● stack                                 8.5
 ● needsdb                       no database
 Stack running                        Stop →

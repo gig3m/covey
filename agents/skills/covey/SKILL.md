@@ -202,7 +202,7 @@ stack is deliberately down. Hovering shows a one-line summary.
 **Clicking opens a flyout** listing every site under management:
 
     SITES                          php 8.5, 8.3
-    ● southsidechurch                       8.5
+    ● shop                                  8.5
     ● stack                                 8.5
     ● needsdb                       no database
     Stack running                        Stop →
