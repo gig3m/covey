@@ -1,6 +1,6 @@
 # Design notes
 
-Why covey is shaped the way it is. `CLAUDE.md` states the invariants; this
+Why covey is shaped the way it is. [`HACKING.md`](HACKING.md) states the invariants; this
 records the reasoning behind them, including the options that were rejected and
 why. Written down because the alternatives look attractive again every time you
 forget what they cost.
@@ -229,7 +229,7 @@ seventeen sites checked out, several half-finished, `ok` was false and the bar
 was urgent more or less always — so the signal stopped meaning anything. The
 fix is not better checks; it is being able to say "not this one, not today."
 
-The obvious objection is that `CLAUDE.md` forbids exactly this: *derive state
+The obvious objection is that `HACKING.md` forbids exactly this: *derive state
 from systemd, never from a marker file.* The distinction that resolves it:
 
 - The **stack's** up/down is an **observation**. `covey.target` already knows

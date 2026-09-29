@@ -4,7 +4,7 @@ PartOf=covey.target
 After=network.target
 # A pull needs DNS, which may not be up yet when this starts at login.
 # Retry rather than ordering on network-online.target: that target is inert
-# in the user manager (see CLAUDE.md).
+# in the user manager (see docs/HACKING.md).
 StartLimitIntervalSec=1800
 StartLimitBurst=5
 

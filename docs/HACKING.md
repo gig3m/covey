@@ -1,14 +1,15 @@
-# covey — working notes for agents
+# Hacking on covey
 
 A local PHP development environment for Linux. A directory in `~/Covey` is
-served at `https://<name>.localhost`. See `README.md` for user docs and
-`agents/skills/covey/` for the operator-facing skill.
+served at `https://<name>.localhost`. See [`README.md`](../README.md) for user
+docs and [`agents/skills/covey/`](../agents/skills/covey/) for the
+operator-facing skill.
 
 **This file is about working ON covey.** The skill is about USING it.
 
 For *why* these decisions were made — including the approaches that were
 rejected (Valet Linux Plus, DDEV, mise-php, containerised FPM) and what they
-cost — read [`docs/DESIGN.md`](docs/DESIGN.md). Read it before proposing an
+cost — read [`DESIGN.md`](DESIGN.md). Read it before proposing an
 architectural change; the alternatives look attractive again every time you
 forget why they were turned down.
 
@@ -60,7 +61,7 @@ observation, which is why it lives in a file and does not contradict "derive
 state from systemd": a site is a Caddy block, not a unit, so there is nothing
 to derive it from, and it cannot live in the generated Caddyfile (sync rewrites
 it) or the project's `.covey` (covey never writes inside a project). See
-`docs/DESIGN.md` §10.
+`DESIGN.md` §10.
 
 **`~/Covey` is enumerated in exactly one place**: `core.php sites`, which emits
 name/dir/tag/enabled/kind. `cmd_sync` and `cmd_sites` consume it. It was
@@ -105,7 +106,7 @@ environment.
 - **`After=network-online.target` is inert in the user manager.** The target is
   not even loaded in the user instance (`systemctl --user is-active
   network-online.target` → inactive, 0 units listed), so ordering on it is a
-  no-op that *looks* like a fix. On this machine the system side is no better:
+  no-op that *looks* like a fix. On the machine covey was built on, the system side was no better:
   `network-online.target` reports active while
   `NetworkManager-wait-online.service` is masked, so nothing ever waited. This
   bit `covey-services.service`, which starts at login and needs DNS when an
@@ -155,9 +156,7 @@ breakage is legible. Cheap ways to force one:
     docker compose -f share/compose/covey.yaml stop redis             # service_down
 
 For the bar widget there is no substitute for looking at it. `grim` can capture
-it; this machine has two monitors (DP-2 logical 0–3072 at scale 1.25, HDMI-A-1
-beyond that), and the bar's right section sits near x≈2560–3072 on DP-2.
-`omarchy-shell covey toggle` opens the flyout without a mouse.
+it, and `omarchy-shell covey toggle` opens the flyout without a mouse.
 
 ## Deliberately not done
 
