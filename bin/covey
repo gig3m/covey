@@ -217,8 +217,10 @@ cmd_php() {
       local t="${2:?usage: covey php install <tag>}"
       [[ -n "$(series "$t")" ]] || die "unknown PHP tag: $t"
       tag_installed "$t" && { echo "PHP $(series "$t") already installed"; return 0; }
-      echo "installing: $(php_pkgs "$t")"
-      sudo pacman -S --needed --noconfirm $(php_pkgs "$t") || die "install failed"
+      local -a pkgs
+      read -ra pkgs <<< "$(php_pkgs "$t")"
+      echo "installing: ${pkgs[*]}"
+      sudo pacman -S --needed --noconfirm "${pkgs[@]}" || die "install failed"
       ensure_php_pool "$t" && echo "PHP $(series "$t") ready" ;;
     configure) shift; cmd_php_configure "$@" ;;
     *) die "usage: covey php [list|install <tag>|configure <tag>]" ;;
@@ -330,7 +332,7 @@ cmd_autostart() {
 
 cmd_sites() {
   [[ -d "$COVEY_SITES" ]] || die "no sites root at $COVEY_SITES"
-  local found=0 name d ver enabled kind state
+  local found=0 name d ver enabled kind
   while IFS=$'\t' read -r name d ver enabled kind; do
     [[ -n "$name" ]] || continue
     found=1
