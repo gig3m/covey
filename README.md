@@ -105,6 +105,7 @@ covey doctor
 | `covey doctor [--json]` | Check the platform and every site |
 | `covey sites` | List sites, their PHP version and URLs |
 | `covey site up\|down <name>` | Take one site in or out of service |
+| `covey site solo <name>` / `restore` | Serve only one site; put the rest back |
 | `covey sync` | Regenerate site config from `~/Covey`, reload |
 | `covey php list` | Show PHP providers |
 | `covey php install <tag>` | Install a PHP provider |
@@ -293,6 +294,23 @@ nothing. What it does do:
 The list of what is off lives in `~/.config/covey/disabled`, one name per line.
 It is never written into the project — covey does not touch your files.
 
+### Solo
+
+With many projects checked out, the common case is "just this one today":
+
+```console
+$ covey site solo iris
+covey: only iris is up - https://iris.localhost (covey site restore to end)
+
+$ covey site restore
+covey: solo ended, sites restored
+```
+
+`restore` puts back the list that was off *before* solo, not "everything on" —
+a half-finished project you had switched off stays off. Soloing a second site
+while already in solo keeps that original list. `covey doctor` shows a `SOLO`
+line while it is in effect, and the saved list lives in `~/.config/covey/solo`.
+
 ## Certificates
 
 `covey trust` installs the local CA into **both** the system trust store and the
@@ -350,14 +368,22 @@ omarchy plugin enable covey
 One icon: normal while every check passes, red when any fails, dimmed while the
 stack is deliberately down. Clicking opens a flyout listing every site under
 management with its state — PHP version when healthy, a short problem label when
-not — and a row that takes the stack up or down. Clicking a site opens it in the
-browser.
+not — and a row that takes the stack up or down.
+
+- **Click a site's name** to open it in the browser.
+- **Its switch** runs `covey site up|down` — the quick way to silence a site
+  that is red because you are not working on it.
+- **Hover a row** for `solo`, `term` (a terminal in the project directory) and
+  `copy` (the URL).
+- Sites that are off fold into an **Off (n)** group; in solo mode a banner
+  offers **Restore**.
 
 ```
 SITES                          php 8.5, 8.3
-● shop                                  8.5
-● stack                                 8.5
-● needsdb                       no database
+● shop                            8.5  [■]
+● stack                           8.5  [■]
+● needsdb                 no database  [■]
+▸ Off (2)
 Stack running                        Stop →
 All checks passed              Full report →
 ```

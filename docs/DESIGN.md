@@ -272,6 +272,15 @@ been a fourth thing to keep in step. They now all consume `core.php sites`,
 which is what the "core.php is the single source of truth" invariant asked for
 in the first place.
 
+**Solo came later, and its one real decision was what "undo" means.** With
+eleven sites checked out, the switch you actually want is "only this one
+today". The tempting undo is "turn everything back on", which silently
+re-enables the half-finished project you had switched off on purpose, the
+exact case per-site down exists for. So `covey site solo` saves the list that
+was off before it, in `~/.config/covey/solo`, and `covey site restore` puts
+that list back. It is the same kind of file as `disabled`: declared intent,
+input to the model, nothing else on the machine knows it.
+
 ## 11. What running a real application changed
 
 The design was validated by cloning an actual Laravel 12 app, not by reasoning.

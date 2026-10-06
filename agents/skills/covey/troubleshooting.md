@@ -12,6 +12,7 @@ passes and `1` when anything fails.
     {
       "ok": false,
       "state": "up",            // up | degraded | down - check this first
+      "solo": null,             // a site name while `covey site solo` is in effect
       "resources": {            // memory the stack is using
         "units":      [ {"name": "covey-caddy.service", "bytes": 88088576}, ... ],
         "containers": null,     // only measured with --resources (costs ~2s)

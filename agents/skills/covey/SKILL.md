@@ -35,6 +35,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey trust              trust the local CA (system + browser stores)
     covey sites              list sites, their PHP version and URLs
     covey site up|down <n>   take one site in or out of service
+    covey site solo <n>      serve only this site; `covey site restore` undoes it
     covey php [list|install <tag>|configure <tag>]
     covey services [up|down|status|logs]
     covey db [list|create <name>|drop <name>|shell]
@@ -165,6 +166,12 @@ it does do:
 State lives in `~/.config/covey/disabled`, one name per line - never in the
 project. `covey site down` on a site that does not exist is an error, not a
 silent no-op.
+
+**Solo.** `covey site solo <name>` turns every other site off;
+`covey site restore` puts back exactly the list that was off before solo (not
+"everything on"). Doctor's JSON carries `"solo": "<name>"` (or `null`) while it
+is in effect. Like `site down`, ending solo is the user's call - do not run
+`restore` to "fix" sites that solo switched off.
 
 ## Up and down
 

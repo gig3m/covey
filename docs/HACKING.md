@@ -136,6 +136,11 @@ environment.
   is measured only behind `--resources`, never on the path the bar polls.
   systemd's `MemoryCurrent` is a free property read, and one `systemctl show`
   covers every unit at once.
+- **A QML inline `component` does not share the file's id scope.** Inside
+  `component Foo: Item {}`, `root` and every other id in the file are
+  unreachable, so anything that needs them belongs in a delegate, not a
+  component. The flyout's site rows are a single Repeater delegate for this
+  reason; `LinkText` is an inline component only because it needs no ids.
 - **Bar styling must follow the shell**: bind `font.family` to the bar's
   `fontFamily`, falling back to `Style.font.family` (the fontconfig `monospace`
   alias). Never bind to `Style.font.resolvedFamily` — that exists only for
@@ -155,8 +160,12 @@ breakage is legible. Cheap ways to force one:
     printf 'php = 8.2\n' > ~/Covey/x/.covey                           # no_provider
     docker compose -f share/compose/covey.yaml stop redis             # service_down
 
-For the bar widget there is no substitute for looking at it. `grim` can capture
-it, and `omarchy-shell covey toggle` opens the flyout without a mouse.
+For the bar widget there is no substitute for looking at it. `grim -o <output>`
+captures one monitor (check `hyprctl monitors -j` for names), and
+`omarchy-shell covey toggle` opens the flyout without a mouse. With no
+pointer-synthesis tool installed, exercise a click path by adding a temporary
+`Timer` that calls the same function the click does, restart the shell,
+capture, and remove it.
 
 ## Deliberately not done
 

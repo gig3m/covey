@@ -178,6 +178,18 @@ function disabled_sites(): array {
 }
 function site_enabled(string $name): bool { return !isset(disabled_sites()[$name]); }
 
+// Solo mode: `covey site solo <name>` turns every other site off and keeps the
+// list that was off before, so `covey site restore` can put it back exactly.
+// The file's first line is the solo site; the rest is that saved list. Like
+// `disabled`, it is declared intent - nothing else on the machine knows it.
+function solo_site(): ?string {
+    global $CONFIG;
+    $f = "$CONFIG/solo";
+    if (!is_file($f)) return null;
+    $l = trim((string)strtok((string)file_get_contents($f), "\n"));
+    return $l === '' ? null : $l;
+}
+
 // ---- checks ----------------------------------------------------------------
 function unit_active(string $u): bool {
     exec('systemctl --user is-active --quiet ' . escapeshellarg($u), $o, $rc);
@@ -487,6 +499,7 @@ function doctor(bool $containers = false): array {
     foreach ($sites as $s) foreach ($s['checks'] as $c) if (!$c['ok']) $ok = false;
     return ['ok'=>$ok,
             'state'=>!$live ? 'down' : ($degraded ? 'degraded' : 'up'),
+            'solo'=>solo_site(),
             'resources'=>resources($live, $containers),
             'platform'=>$platform, 'sites'=>$sites];
 }
@@ -569,10 +582,11 @@ function render_human(array $d): int {
     $mem = (int)($d['resources']['bytes'] ?? 0);
     $note = ['up'=>'running', 'degraded'=>'partly running', 'down'=>'stopped'][$state] ?? $state;
     if ($state === 'up' && $mem > 0) $note .= sprintf('  (%s)', mib($mem));
-    printf("STACK    %s\n\n", $tty ? ($state === 'down' ? "\033[2m$note\033[0m"
+    printf("STACK    %s\n", $tty ? ($state === 'down' ? "\033[2m$note\033[0m"
                                        : ($state === 'up' ? "\033[32m$note\033[0m" : "\033[31m$note\033[0m"))
                                      : $note);
-    echo "PLATFORM\n";
+    if (!empty($d['solo'])) printf("SOLO     %s  (covey site restore to end)\n", $d['solo']);
+    echo "\nPLATFORM\n";
     foreach ($d['platform'] as $c) $line($c);
     foreach ($d['sites'] as $s) {
         // Dim a deliberately-disabled site rather than colouring it like a

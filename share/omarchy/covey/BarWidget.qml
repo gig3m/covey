@@ -7,14 +7,15 @@ import qs.Ui
 // The bar shows one colour: green while every site's platform requirements are
 // met, red the moment one is not, and dimmed when the stack is deliberately
 // down. Clicking opens a flyout listing the sites under management with their
-// state, and a control to bring the stack up or down.
+// state, a switch per site, and a control to bring the stack up or down.
 //
 // Memory figures are not shown here on purpose: measuring the containers costs
 // a ~2s `docker stats` sample, which is far too expensive for something polled
 // every 15 seconds. `covey status` is where that question gets answered.
 //
 // Everything here comes from `covey doctor --json` - the same model the CLI and
-// any agent read. This widget is a renderer, not a second source of truth.
+// any agent read. This widget is a renderer, not a second source of truth:
+// every control runs a `covey` command, and nothing here writes covey's files.
 BarWidget {
   id: root
   moduleName: "covey"
@@ -25,11 +26,35 @@ BarWidget {
   property string stackState: "up"   // up | degraded | down
   property bool acting: false        // an up/down is in flight
   property string actedFrom: ""
-  property var sites: []            // [{name, url, php, ok, state}]
+  property var sites: []            // [{name, url, path, php, ok, state, enabled}]
   property var platformIssues: []   // [{check, detail}]
   property string phpSummary: ""
+  property string solo: ""           // the site `covey site solo` left running
   property string tooltip: "covey"
   property bool popupOpen: false
+  property bool showOff: false       // the "Off" group is expanded
+
+  // Per-site commands queue here and run one at a time. The CLI also takes a
+  // lock, but queueing keeps the switches' busy state honest.
+  property var queue: []
+  // name -> desired enabled, while a switch's command is queued or running.
+  // The switch shows this value so the knob throws on click, not on refresh.
+  property var pending: ({})
+  readonly property var blankSite: ({ name: "", url: "", path: "", php: "", ok: true,
+                                       state: "", enabled: true })
+  readonly property bool siteBusy: siteProc.running || root.queue.length > 0
+
+  readonly property var liveSites: root.sites.filter(function (x) { return x.enabled })
+  readonly property var offSites: root.sites.filter(function (x) { return !x.enabled })
+  // Live sites, then one "Off (n)" header, then - when expanded - the rest.
+  readonly property var listModel: {
+    var m = root.liveSites.map(function (x) { return { kind: "site", site: x } })
+    if (root.offSites.length > 0) {
+      m.push({ kind: "off" })
+      if (root.showOff) m = m.concat(root.offSites.map(function (x) { return { kind: "site", site: x } }))
+    }
+    return m
+  }
 
   function close() { popupOpen = false }
   function togglePopup() { popupOpen = !popupOpen }
@@ -41,7 +66,13 @@ BarWidget {
   readonly property int refreshSec: settings && settings.refreshIntervalSec
     ? Number(settings.refreshIntervalSec) : 15
 
-  function refresh() { if (!doctorProc.running) doctorProc.running = true }
+  // A refresh asked for while one is running is not dropped: the running one
+  // may have read the model from before a site command finished.
+  property bool refreshAgain: false
+  function refresh() {
+    if (doctorProc.running) root.refreshAgain = true
+    else doctorProc.running = true
+  }
 
   // Short labels keyed on the stable `problem` code. The flyout wants a state,
   // not a sentence - full detail lives in `covey doctor`.
@@ -109,16 +140,21 @@ BarWidget {
       var live = site.enabled !== false
       if (live) versions[ver] = true
       list.push({ name: String(site.name), url: String(site.url),
+                  path: String(site.path || ""),
                   php: ver, ok: st.ok, state: st.text, enabled: live })
     }
 
     root.known = true
     root.stackState = stackSt
     root.sites = list
+    root.solo = d.solo ? String(d.solo) : ""
     root.platformIssues = issues
     root.phpSummary = Object.keys(versions).sort().join(", ")
     root.failures = issues.length + list.filter(function (x) { return !x.ok }).length
     root.healthy = d.ok === true
+    // Only once every queued command has finished is the model the truth;
+    // before that it can predate a switch that was just flipped.
+    if (!root.siteBusy) root.pending = ({})
     root.tooltip = stackSt === "down"
       ? "covey — stopped (click to start)"
       : (root.failures === 0
@@ -142,6 +178,30 @@ BarWidget {
     root.actedFrom = root.stackState
     root.acting = true
     settle.ticks = 0
+  }
+
+  // Per-site commands. Like setStack, these run once, on the clicked instance;
+  // when the queue drains, every instance is told to refresh. `covey sync`
+  // drops doctor's cache, so that refresh reads the new model.
+  function runSite(args) {
+    root.queue = root.queue.concat([args])
+    if (!siteProc.running) runNext()
+  }
+  function runNext() {
+    if (root.queue.length === 0) { root.broadcast("refresh"); return }
+    var next = root.queue[0]
+    root.queue = root.queue.slice(1)
+    siteProc.command = [root.coveyBin, "site"].concat(next)
+    siteProc.running = true
+  }
+  function setSite(name, up) {
+    var p = Object.assign({}, root.pending)
+    p[name] = up
+    root.pending = p
+    runSite([up ? "up" : "down", name])
+  }
+  function enabledOf(site) {
+    return root.pending[site.name] !== undefined ? root.pending[site.name] : site.enabled
   }
 
   visible: true
@@ -186,7 +246,17 @@ BarWidget {
         root.sites = []
         root.tooltip = "covey — doctor could not run (is covey installed?)"
       }
+      if (root.refreshAgain) { root.refreshAgain = false; root.refresh() }
     }
+  }
+
+  Process {
+    id: siteProc
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim()) console.warn("covey:", text.trim())
+    }
+    onExited: root.runNext()
   }
 
   Timer {
@@ -201,7 +271,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: ""
+    text: ""
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.tooltip
@@ -215,13 +285,32 @@ BarWidget {
     onPressed: root.popupOpen = !root.popupOpen
   }
 
+  // A small text action: the flyout's links ("Restore →", "solo", ...).
+  // An inline component does not share this file's id scope, so it cannot see
+  // `root`: callers set the font family.
+  component LinkText: Text {
+    id: link
+    signal activated()
+    property color baseColor: Qt.darker(Color.popups.text, 1.3)
+    color: linkMouse.containsMouse ? Color.popups.text : baseColor
+    font.pixelSize: Style.font.caption
+    MouseArea {
+      id: linkMouse
+      anchors.fill: parent
+      anchors.margins: -Style.space(3)
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: link.activated()
+    }
+  }
+
   PopupCard {
     id: popup
     anchorItem: root
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(340))
+    contentWidth: popup.fittedContentWidth(Style.space(380))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
     Column {
@@ -254,58 +343,178 @@ BarWidget {
 
       PanelSeparator { width: parent.width }
 
-      // One row per site: state dot, name, then version (healthy) or a short
-      // problem label (not). Monospace keeps the right column aligned.
-      Repeater {
-        model: root.sites
-        Item {
+      // Solo mode is a temporary state, so it says how to leave it.
+      Item {
+        width: parent.width
+        height: Style.space(20)
+        visible: root.solo !== ""
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Solo: " + root.solo
+          color: Color.popups.text
+          font.family: root.uiFont
+          font.pixelSize: Style.font.bodySmall
+        }
+        LinkText {
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.right: parent.right
+          text: "Restore →"
+          font.family: root.uiFont
+          onActivated: root.runSite(["restore"])
+        }
+      }
+
+      // The list scrolls rather than growing the card past the screen.
+      Flickable {
+        width: parent.width
+        height: Math.min(siteCol.implicitHeight, Style.space(24) * 16)
+        contentHeight: siteCol.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        visible: root.sites.length > 0
+
+        Column {
+          id: siteCol
           width: column.width
-          height: Style.space(22)
-          // Same treatment the bar gives a deliberately-stopped stack.
-          opacity: modelData.enabled === false ? 0.45 : 1.0
 
-          Rectangle {
-            id: dot
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(7)
-            height: width
-            radius: width / 2
-            color: (modelData.ok || modelData.enabled === false)
-                     ? Qt.darker(Color.popups.text, 1.6) : Color.urgent
-          }
-          Text {
-            id: nameText
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: dot.right
-            anchors.leftMargin: Style.space(9)
-            text: modelData.name
-            color: Color.popups.text
-            font.family: root.uiFont
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-            width: Math.min(implicitWidth, parent.width * 0.45)
-          }
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.right: parent.right
-            text: modelData.enabled === false
-                    ? "disabled"
-                    : (modelData.ok ? modelData.php : modelData.state)
-            color: (modelData.ok || modelData.enabled === false)
-                     ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
-            font.family: root.uiFont
-            font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-            width: Math.min(implicitWidth, parent.width * 0.5)
-            horizontalAlignment: Text.AlignRight
-          }
+          // One site: state dot, name (opens it), then either its version or
+          // problem, or - under the cursor - its actions; and a switch that
+          // takes it in or out of service with `covey site up|down`. Sites
+          // that are off on purpose fold away under one header: with solo on,
+          // that is every site but one, and none of them needs attention.
+          Repeater {
+            model: root.listModel
+            Item {
+              width: column.width
+              height: modelData.kind === "site" ? siteRow.height : offHeader.height
 
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              root.close()
-              Quickshell.execDetached(["xdg-open", modelData.url])
+              Item {
+                id: offHeader
+                width: column.width
+                height: Style.space(24)
+                visible: modelData.kind === "off"
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: (root.showOff ? "\u25be" : "\u25b8") + "  Off (" + root.offSites.length + ")"
+                  color: Qt.darker(Color.popups.text, 1.4)
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.showOff = !root.showOff
+                }
+              }
+
+              Item {
+                id: siteRow
+                // The "Off" header entry has no site; a blank one keeps this
+                // hidden row's bindings from evaluating to undefined.
+                readonly property var site: modelData.site || root.blankSite
+                readonly property bool on: root.enabledOf(site)
+                readonly property bool hot: rowHover.hovered
+
+                width: column.width
+                height: Style.space(24)
+                visible: modelData.kind === "site"
+
+                HoverHandler { id: rowHover }
+
+                Rectangle {
+                  id: dot
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(7)
+                  height: width
+                  radius: width / 2
+                  color: (siteRow.site.ok || !siteRow.site.enabled)
+                           ? Qt.darker(Color.popups.text, 1.6) : Color.urgent
+                  opacity: siteRow.site.enabled ? 1.0 : 0.45
+                }
+                Text {
+                  id: nameText
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.left: dot.right
+                  anchors.leftMargin: Style.space(9)
+                  text: siteRow.site.name
+                  color: Color.popups.text
+                  opacity: siteRow.site.enabled ? 1.0 : 0.45
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  font.underline: nameMouse.containsMouse
+                  elide: Text.ElideRight
+                  width: Math.min(implicitWidth, siteRow.width - right.width - Style.space(28))
+                  MouseArea {
+                    id: nameMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      root.close()
+                      Quickshell.execDetached(["xdg-open", siteRow.site.url])
+                    }
+                  }
+                }
+
+                Row {
+                  id: right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.right: parent.right
+                  spacing: Style.space(10)
+
+                  // Resting: what the site is running, or what is wrong with it.
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: !siteRow.hot
+                    text: !siteRow.site.enabled ? "off" : (siteRow.site.ok ? siteRow.site.php : siteRow.site.state)
+                    color: (siteRow.site.ok || !siteRow.site.enabled)
+                             ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, column.width * 0.4)
+                    horizontalAlignment: Text.AlignRight
+                  }
+
+                  // Under the cursor: actions. Solo is the one you reach for with many
+                  // projects checked out - everything else off, restorable in one click.
+                  LinkText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: siteRow.hot && root.solo !== siteRow.site.name
+                    text: "solo"
+                    font.family: root.uiFont
+                    onActivated: root.runSite(["solo", siteRow.site.name])
+                  }
+                  LinkText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: siteRow.hot && siteRow.site.path !== ""
+                    text: "term"
+                    font.family: root.uiFont
+                    onActivated: {
+                      root.close()
+                      Quickshell.execDetached(["setsid", "uwsm-app", "--", "xdg-terminal-exec",
+                                               "--dir=" + siteRow.site.path])
+                    }
+                  }
+                  LinkText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: siteRow.hot
+                    text: "copy"
+                    font.family: root.uiFont
+                    onActivated: Quickshell.execDetached(["wl-copy", siteRow.site.url])
+                  }
+
+                  ToggleSwitch {
+                    anchors.verticalCenter: parent.verticalCenter
+                    trackHeight: Style.space(14)
+                    cursorPad: Style.space(2)
+                    foreground: Color.popups.text
+                    checked: siteRow.on
+                    busy: root.pending[siteRow.site.name] !== undefined
+                    onToggled: root.setSite(siteRow.site.name, !siteRow.on)
+                  }
+                }
+              }
             }
           }
         }
@@ -314,7 +523,7 @@ BarWidget {
       Text {
         visible: root.sites.length === 0
         width: parent.width
-        text: root.known ? "No sites yet \u2014 mkdir ~/Covey/<name>"
+        text: root.known ? "No sites yet — mkdir ~/Covey/<name>"
                          : "covey is not responding"
         color: Qt.darker(Color.popups.text, 1.4)
         font.family: root.uiFont
@@ -348,7 +557,7 @@ BarWidget {
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: root.acting ? "Working\u2026"
+          text: root.acting ? "Working…"
               : root.stackState === "down" ? "Stack stopped"
               : root.stackState === "degraded" ? "Stack partly running"
               : "Stack running"
@@ -360,7 +569,7 @@ BarWidget {
           anchors.verticalCenter: parent.verticalCenter
           anchors.right: parent.right
           visible: !root.acting
-          text: root.stackState === "down" ? "Start \u2192" : "Stop \u2192"
+          text: root.stackState === "down" ? "Start →" : "Stop →"
           color: Qt.darker(Color.popups.text, 1.3)
           font.family: root.uiFont
           font.pixelSize: Style.font.bodySmall
@@ -397,7 +606,7 @@ BarWidget {
           id: reportLabel
           anchors.verticalCenter: parent.verticalCenter
           anchors.right: parent.right
-          text: "Full report \u2192"
+          text: "Full report →"
           color: Color.popups.text
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
