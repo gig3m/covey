@@ -3,7 +3,10 @@ Description=Covey share tunnel for %i
 # Sharing is explicit and ephemeral: no [Install], so a share never comes back
 # by itself at login or on `covey up`, and PartOf= ends it on `covey down`.
 PartOf=covey.target
-After=covey-caddy.service
+# Requisite: refuse to start at all unless the stack is up. PartOf only stops
+# a share when the target stops; it does not stop one starting after.
+Requisite=covey.target
+After=covey.target covey-caddy.service
 StartLimitIntervalSec=120
 StartLimitBurst=4
 

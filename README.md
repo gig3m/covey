@@ -211,6 +211,12 @@ $ covey php settings                             # what is in effect
 $ covey php unset memory_limit                   # back to covey's default
 ```
 
+Values are limited to letters, digits, spaces and `. / : _ - + ~ & | ^ !`
+(enough for sizes, times, timezones and `E_ALL & ~E_DEPRECATED`), because they
+are written into the FPM pool config; a hand-edited line outside that is ignored
+and reported by `covey doctor`, and a pool config `php-fpm -t` rejects is never
+installed.
+
 Changes live in `~/.config/covey/php.ini` and apply to every PHP version's
 pool, rendered as `php_value` so an app can still `ini_set()` over them. Pools
 are **reloaded**, not restarted (php-fpm re-reads its config on `USR2` and keeps
@@ -389,7 +395,11 @@ How it fits together:
 
 - **covey gives a shared site a loopback listener** on `127.0.0.1:41xxx` (the
   port comes from the site name) that serves it whatever `Host` arrives, and
-  tells PHP the request is HTTPS so the app builds `https://` links.
+  tells PHP the request is HTTPS so the app builds `https://` links. Because it
+  is public, it is stricter than the local one: dotfiles (`.env`, `.git/`) are
+  refused, and a framework app is served from `public/` only — if
+  `public/index.php` disappears mid-checkout the share returns 404 rather than
+  falling back to the project root.
 - **The tunnel is one row of data**, in `share/tunnels.tsv`: the binary, its
   arguments, and a regex that finds the public URL in its output. Another tool
   (ngrok, a named Cloudflare tunnel) is another row moved to the top — covey is

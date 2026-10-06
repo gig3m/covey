@@ -92,6 +92,12 @@ ensure_php_pool() {
   while IFS=$'\t' read -r k v; do
     [[ -n "$k" ]] && printf 'php_value[%s] = %s\n' "$k" "$v" >> "$tmp"
   done < <(core ini)
+  # Never install a config php-fpm rejects: a reload would take the pool down.
+  if ! "$(fpm_bin "$ver")" -t --fpm-config "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "PHP $(series "$ver"): generated pool config failed php-fpm -t; kept the previous one"
+    return 1
+  fi
   # A running pool only reads its config at start or reload, so a changed
   # config means a reload - otherwise `covey php set` would appear to do nothing.
   local changed=1
@@ -216,15 +222,17 @@ cmd_sync() {
   local sname sport sstate sdir
   while IFS=$'\t' read -r sname sport sstate; do
     [[ -n "$sname" ]] || continue
-    sdir="$(core_sites | awk -F'\t' -v n="$sname" '$1 == n && $4 == "1" {print $2"\t"$3}')"
+    sdir="$(core_sites | awk -F'\t' -v n="$sname" '$1 == n && $4 == "1" {print $2"\t"$3"\t"$5}')"
     if [[ -z "$sdir" ]]; then
       systemctl --user stop "covey-share@$sname.service" 2>/dev/null || true
       systemctl --user reset-failed "covey-share@$sname.service" 2>/dev/null || true
       continue
     fi
     [[ "$sstate" == "failed" ]] && continue
-    printf '\nhttp://:%s {\n\timport covey_shared %s %s/covey/php%s.sock\n}\n' \
-      "$sport" "${sdir%%$'\t'*}" "$COVEY_RUNTIME" "${sdir##*$'\t'}" >> "$tmp"
+    local sd stag skind
+    IFS=$'\t' read -r sd stag skind <<< "$sdir"
+    printf '\nhttp://:%s {\n\timport covey_shared_%s %s %s/covey/php%s.sock\n}\n' \
+      "$sport" "$([[ "$skind" == "app" ]] && echo app || echo static)" "$sd" "$COVEY_RUNTIME" "$stag" >> "$tmp"
   done < <(core shares 2>/dev/null)
 
   if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
@@ -312,8 +320,9 @@ apply_php_ini() {
 cmd_php_set() {
   local k="${1:-}" v="${2:-}"
   [[ -n "$k" && $# -eq 2 ]] || die "usage: covey php set <key> <value>   (quote a value with spaces)"
-  [[ "$k" =~ ^[a-z][a-z0-9_.]*$ ]] || die "invalid setting name: $k"
-  [[ -n "$v" && "$v" != *$'\n'* && "$v" != *'"'* && "$v" != *';'* ]] || die "invalid value: $v"
+  # One validator, in core.php, also applied when the file is read back - so a
+  # hand edit cannot get past it either.
+  core ini-check "$k" "$v" || die "invalid setting: $k = $v (letters, digits, spaces and . / : _ - + ~ & | ^ ! only)"
   # Only keys PHP itself knows: a typo would otherwise be written, rendered,
   # and silently ignored by FPM.
   "$(php_bin "$COVEY_DEFAULT_PHP")" -r 'exit(ini_get($argv[1]) === false ? 1 : 0);' -- "$k" \
@@ -414,6 +423,11 @@ drop_doctor_cache() { rm -f "$COVEY_RUNTIME/covey/doctor.json"; }
 
 cmd_up() {
   docker_ok || warn "docker is not available - services (mysql, redis, mailpit) will not start"
+  # A deliberate start clears systemd's failure state and start-rate counters.
+  # covey-services' StartLimitBurst exists to bound the at-login retry, but it
+  # counts manual starts too: five `covey down`/`covey up` cycles in half an
+  # hour (easy from the bar) left the services failed with start-limit-hit.
+  systemctl --user reset-failed 'covey-*' 2>/dev/null || true
   systemctl --user start covey.target
   # Shares do not survive `covey down`, but their listeners are still in the
   # Caddyfile it was stopped with. Re-render so the config matches what runs.
@@ -423,6 +437,9 @@ cmd_up() {
 }
 
 cmd_down() {
+  # Under the lock so a `covey share` in flight cannot start a tunnel after the
+  # stack it belongs to has stopped.
+  site_lock
   systemctl --user stop covey.target covey-caddy.service 'covey-fpm@*.service' \
     covey-services.service covey-sync.path 2>/dev/null || true
   drop_doctor_cache
@@ -593,9 +610,7 @@ cmd_share() {
     [[ $found -eq 0 ]] && echo "no sites are shared (covey share <site>)"
     return 0
   fi
-  systemctl --user is-active --quiet covey.target || die "covey is down (covey up first)"
   site_exists "$name" || die "no such site: $name (try: covey sites)"
-  site_disabled "$name" && die "$name is off (covey site up $name first)"
   local row bin pkg
   row="$(core tunnel)" || die "no tunnel configured in share/tunnels.tsv"
   IFS=$'\t' read -r _ bin pkg _ _ <<< "$row"
@@ -603,6 +618,9 @@ cmd_share() {
 
   local unit="covey-share@$name.service" port url
   site_lock
+  # Checked under the lock: `covey down` and `covey site down` take it too.
+  systemctl --user is-active --quiet covey.target || die "covey is down (covey up first)"
+  site_disabled "$name" && die "$name is off (covey site up $name first)"
   if systemctl --user is-active --quiet "$unit"; then
     url="$(core share-url "$name")"
     echo "covey: $name is already shared${url:+ - $url}"; return 0

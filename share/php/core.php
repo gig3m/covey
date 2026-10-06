@@ -169,8 +169,30 @@ function php_ini_custom(): array {
     }
     return $out;
 }
-// Effective settings: defaults, overridden by the user's file.
-function php_ini(): array { return array_merge(PHP_INI_DEFAULTS, php_ini_custom()); }
+// What may appear in a setting. Values are written verbatim into the FPM pool
+// config, so anything that could end the line or start a new directive - a
+// CR, a quote, ;, =, [ - would let a value rewrite the pool (one test turned
+// `512M\rlisten = 0.0.0.0:19000` into a network listener). Allow-list instead.
+function ini_valid(string $k, string $v): bool {
+    return preg_match('/^[a-z][a-z0-9_.]*$/', $k) === 1
+        && preg_match('#^[A-Za-z0-9 ._/:+~&|^!-]{1,200}$#', $v) === 1;
+}
+// Lines in the user's file that fail the check, for doctor to report.
+function php_ini_invalid(): array {
+    global $CONFIG;
+    $bad = [];
+    foreach (is_file("$CONFIG/php.ini") ? file("$CONFIG/php.ini", FILE_IGNORE_NEW_LINES) : [] as $l) {
+        if (trim($l) === '' || preg_match('/^\s*[;#]/', $l)) continue;
+        if (!preg_match('/^\s*([a-z][a-z0-9_.]*)\s*=\s*(.*?)\s*$/', $l, $m) || !ini_valid($m[1], $m[2]))
+            $bad[] = $l;
+    }
+    return $bad;
+}
+// Effective settings: defaults, overridden by the user's file (valid lines only).
+function php_ini(): array {
+    return array_merge(PHP_INI_DEFAULTS,
+        array_filter(php_ini_custom(), fn($v, $k) => ini_valid($k, $v), ARRAY_FILTER_USE_BOTH));
+}
 
 // "64M" -> bytes, for comparing sizes. PHP's own shorthand: K, M, G.
 function ini_bytes(string $v): ?int {
@@ -418,6 +440,14 @@ function platform_checks(bool $live): array {
             'fix'=>fix("covey php set post_max_size {$ini['upload_max_filesize']}")]);
     }
 
+    // Lines covey refused to apply (a hand edit). Unsetting is safe whatever the
+    // value was, but the key may itself be the malformed part - so a hint.
+    foreach (php_ini_invalid() as $l) {
+        $c[] = chk('php-ini', false, ['problem'=>'php_ini_invalid',
+            'detail'=>'ignored line in ' . $GLOBALS['CONFIG'] . '/php.ini: ' . preg_replace('/[[:cntrl:]]/', '?', $l),
+            'hint'=>'edit or delete that line; values may use letters, digits, spaces and . / : _ - + ~ & | ^ !']);
+    }
+
     // Browsers read NSS, not the system store; being trusted by curl says nothing.
     $nss = getenv('HOME') . '/.pki/nssdb';
     if (is_dir($nss)) {
@@ -564,9 +594,12 @@ function site_report(string $name, string $dir, bool $live): array {
         $ident['share'] = ['state'=>$sh, 'url'=>$url, 'port'=>share_port($name),
                            'tunnel'=>tunnel()['name'] ?? null];
         $checks[] = $sh === 'failed'
+            // The fix clears the failed share. Re-sharing republishes the
+            // site, which only a person should decide - so it is not a fix.
             ? chk('share', false, ['problem'=>'share_failed',
-                'detail'=>"the tunnel for $name stopped (journalctl --user -u covey-share@$name)",
-                'fix'=>fix("covey share $name")])
+                'detail'=>"the tunnel for $name stopped (journalctl --user -u covey-share@$name); "
+                        . "covey share $name to share it again",
+                'fix'=>fix("covey unshare $name")])
             : chk('share', OK, ['detail'=>$url ?? 'starting']);
     } else {
         $ident['share'] = null;
@@ -578,7 +611,14 @@ function site_report(string $name, string $dir, bool $live): array {
     if ($live) $checks[] = http_check($name);
 
     $cf = covey_file($dir);
-    if ($live && !empty($cf['database'])) {
+    // The name comes from the project's .covey, so it is untrusted text: it ends
+    // up in a fix.cmd that agents run blindly and the settings window runs in a
+    // shell. Only names `covey db create` would accept get a fix at all.
+    if ($live && !empty($cf['database']) && !preg_match('/^[A-Za-z0-9_]+$/', $cf['database'])) {
+        $checks[] = chk('database', false, ['problem'=>'database_name_invalid',
+            'detail'=>'.covey database name is not a plain identifier',
+            'hint'=>'use letters, digits and underscores in the database = line of .covey']);
+    } elseif ($live && !empty($cf['database'])) {
         $e = db_exists($cf['database']);
         $checks[] = $e === true
             ? chk('database', OK, ['detail'=>$cf['database']])
@@ -704,9 +744,7 @@ function status(bool $containers = true): array {
             'services'=>services_inventory($live, $cs),
             'php'=>php_inventory($live),
             'php_ini'=>php_ini_inventory(),
-            'shares'=>array_map(fn($n, $st) => ['site'=>$n, 'state'=>$st,
-                'url'=>$st === 'failed' ? null : share_url($n), 'port'=>share_port($n)],
-                array_keys(shares()), array_values(shares())),
+            'shares'=>shares_inventory(),
             'settings'=>settings_inventory()];
 }
 
@@ -761,6 +799,15 @@ function php_inventory(bool $live): array {
                   'extensions'=>$ext,
                   'install'=>$installed ? null : "covey php install $tag"];
     }
+    return $out;
+}
+
+// One snapshot of shares(): two calls could disagree while a share starts.
+function shares_inventory(): array {
+    $out = [];
+    foreach (shares() as $n => $st)
+        $out[] = ['site'=>$n, 'state'=>$st, 'url'=>$st === 'failed' ? null : share_url($n),
+                  'port'=>share_port($n)];
     return $out;
 }
 
@@ -911,6 +958,7 @@ if ($cmd === 'tunnel') {
 
 // The effective php.ini settings, for `covey sync` to render into each pool.
 // Emits: key \t value
+if ($cmd === 'ini-check') { exit(ini_valid((string)($argv[2] ?? ''), (string)($argv[3] ?? '')) ? 0 : 1); }
 if ($cmd === 'ini') {
     foreach (php_ini() as $k => $v) printf("%s\t%s\n", $k, $v);
     exit(0);

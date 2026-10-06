@@ -162,7 +162,7 @@ Item {
               if (root.status.services[j].name === d.services[i].name)
                 d.services[i].bytes = root.status.services[j].bytes
         }
-        if (d) root.status = d
+        if (d && !root.editing) root.status = d
       }
     }
     onExited: if (!fullStatus.running) fullStatus.running = true
@@ -172,7 +172,9 @@ Item {
     command: [root.coveyBin, "status", "--json"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: { var d = root.parse(text); if (d) root.status = d }
+      // A refresh already in flight when editing began must not replace the
+      // rows (and the half-typed field) either; the next poll catches up.
+      onStreamFinished: { var d = root.parse(text); if (d && !root.editing) root.status = d }
     }
   }
   Process {

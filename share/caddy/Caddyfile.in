@@ -2,6 +2,12 @@
 # Source: share/caddy/Caddyfile.in
 {
 	admin localhost:2019
+	# Every listener is loopback-only. Without this Caddy binds :443 on all
+	# interfaces, and anything on the LAN that sends a site's name as SNI/Host
+	# reaches it - including Mailpit's inbox, which Docker deliberately binds
+	# to 127.0.0.1. Other machines cannot resolve *.localhost anyway, so this
+	# loses nothing.
+	default_bind 127.0.0.1 [::1]
 }
 
 # The app itself: root, PHP and static files.
@@ -42,10 +48,37 @@
 
 # A site being shared with `covey share`: a loopback-only plain-HTTP listener
 # that serves the site whatever Host header arrives, which is what a tunnel
-# sends (xyz.trycloudflare.com). The tunnel terminates TLS; this never faces
-# the network directly.
-(covey_shared) {
+# sends (xyz.trycloudflare.com). The tunnel terminates TLS.
+#
+# Stricter than the local listener, because this one is public:
+#  - dotfiles (.env, .git/) are refused outright, whatever the docroot;
+#  - a framework app (kind "app") is pinned to public/ with no fallback to the
+#    project root, so if public/index.php vanishes mid-checkout the share fails
+#    closed instead of publishing vendor/, storage/ and the repository.
+# A handle, not a bare respond: Caddy runs handle blocks before respond, so a
+# bare respond lost to covey_app's catch-all handle and .env was served. Handle
+# blocks with named matchers keep their order, and this one is imported first.
+(covey_private) {
+	@private {
+		path /.* */.*
+		not path /.well-known/*
+	}
+	handle @private {
+		respond 404
+	}
+}
+(covey_shared_app) {
 	bind 127.0.0.1
+	import covey_private
+	root * {args[0]}/public
+	php_fastcgi unix/{args[1]} {
+		env HTTPS on
+	}
+	file_server
+}
+(covey_shared_static) {
+	bind 127.0.0.1
+	import covey_private
 	import covey_app {args[0]} {args[1]}
 }
 

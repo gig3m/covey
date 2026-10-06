@@ -205,7 +205,9 @@ leaks `.env` on any error page - say so when you share.
 
 A share is the user unit `covey-share@<site>.service`; state comes from
 systemd. The site's doctor entry carries `"share": {state, url, port, tunnel}`
-(or `null`), and a passing `share` check whose detail is the URL. `covey down`,
+(or `null`), and a passing `share` check whose detail is the URL. A crashed
+tunnel is `share_failed`, whose fix is `covey unshare` - never re-share as a
+fix. `covey down`,
 `covey site down` and solo end shares; nothing re-shares by itself. Requires
 `cloudflared` (`sudo pacman -S cloudflared`); the tunnel is configured as data
 in `share/tunnels.tsv`.

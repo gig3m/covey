@@ -129,6 +129,24 @@ environment.
   `StartLimitBurst`, the pool went `failed`, and every site 502'd until
   `systemctl --user reset-failed`. `ensure_php_pool` reloads only when the
   rendered config changed, then waits for the socket to accept.
+- **Caddy binds every interface unless told otherwise.** Site blocks named
+  `x.localhost` still listened on `*:443`, so anything on the LAN sending that
+  SNI/Host reached the site (and Mailpit, which Docker had bound to loopback).
+  The global `default_bind 127.0.0.1 [::1]` fixes all listeners at once.
+- **Caddy orders `handle` before `respond`.** A bare `respond @private 404`
+  lost to `covey_app`'s catch-all `handle`, and a shared static site served
+  `.env`. Deny with `handle @private { respond 404 }` imported first: handle
+  blocks with named matchers keep their order of appearance.
+- **Untrusted text must never reach a `fix.cmd` or a config file unvalidated.**
+  `.covey` is project-controlled: `database = x; cmd` once produced the fix
+  `covey db create x; cmd`, which agents run blindly and the settings window's
+  Run button hands to `bash -c`. php.ini values are written into the FPM pool
+  config, where a CR started a new directive (`listen = 0.0.0.0:...`).
+  Allow-list such values in core.php (`ini_valid`, the database-name check) and
+  emit a `hint` instead of a `fix` when they fail.
+- **`StartLimitBurst` counts manual starts too.** covey-services' limit (meant
+  to bound the at-login retry) was hit by five `covey down`/`covey up` cycles,
+  leaving the services `failed`. `covey up` runs `reset-failed 'covey-*'` first.
 - **`cmd_sync` takes the site lock itself, and the lock is re-entrant.** Two
   bar instances sharing at once (or a share racing the `covey-sync.path`
   watcher) ran two syncs over each other and failed writing a pool config.
