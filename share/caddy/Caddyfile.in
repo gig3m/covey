@@ -39,3 +39,10 @@
   bring it back: covey site up {args[0]}
 ` 503
 }
+
+# Mailpit's web UI. A covey-owned name, so ~/Covey/mail is not served (doctor
+# reports it as reserved_name). Plain-HTTP 127.0.0.1:8025 still works too.
+mail.localhost {
+	tls internal
+	reverse_proxy 127.0.0.1:8025
+}

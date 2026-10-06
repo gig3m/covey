@@ -30,7 +30,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey autostart on|off   whether the stack starts at login
     covey sync               regenerate site config from ~/Covey, then reload
     covey reload             reload the web server config
-    covey status             stack state, unit state and memory in use
+    covey status [--json]    stack state, memory, services, PHP versions, settings
     covey doctor [--json]    check the platform and every site
     covey trust              trust the local CA (system + browser stores)
     covey sites              list sites, their PHP version and URLs
@@ -127,7 +127,7 @@ edits:
 | MySQL   | `127.0.0.1:3306`     | user `root`, empty password |
 | Postgres| `127.0.0.1:5432`     | user `root`, empty password |
 | Redis   | `127.0.0.1:6379`     | no auth            |
-| Mailpit | SMTP `127.0.0.1:1025`, UI <http://127.0.0.1:8025> | none |
+| Mailpit | SMTP `127.0.0.1:1025`, UI <https://mail.localhost> | none |
 
 Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
 `MAIL_MAILER=smtp`, `MAIL_HOST=127.0.0.1`, `MAIL_PORT=1025`.
@@ -181,6 +181,19 @@ it again. Everything is `PartOf=covey.target`, so one step covers all of it.
 
 `covey status` shows what is running and what it costs. Container memory needs a
 ~2s `docker stats` sample; pass `--no-containers` to skip it.
+
+`covey status --json` is also the **inventory**: the questions that are not
+checks. Reach for it instead of reading covey's files:
+
+    .services[]   name, up, host, port, user/password, env (the .env lines),
+                  url (mailpit: https://mail.localhost), shell (mysql)
+    .php[]        tag, series, installed, version, pool (running), sites
+                  (enabled sites resolving to it), extensions {name: loaded},
+                  install (the command, when not installed)
+    .settings     sites_root, config_dir, default_php, autostart,
+                  unprivileged_port_start (must be <= 80 to bind :80/:443)
+
+Doctor says whether the platform is right; status says what it is.
 
 **A stopped stack is not a broken one.** `covey doctor` reports
 `state: "up" | "degraded" | "down"`, derived from whether `covey.target` is

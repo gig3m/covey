@@ -38,6 +38,12 @@ registry, PHP version resolution, and the check model. `bin/covey` is a thin
 shell wrapper that calls it. Resolution once lived in bash and would have
 drifted from doctor's view of the same sites — do not reimplement it there.
 
+**`SERVICES` in `core.php` is the service registry**: ports, credentials, the
+`.env` lines, URLs. Doctor's port checks and `covey status --json` both read
+it, and image tags are parsed from the compose file rather than repeated. The
+compose file still binds the ports, so a port change is two edits — do not add
+a third copy (in the widget, say).
+
 **`share/providers.tsv` and `share/extensions.txt` are shared data**, read by
 both the shell and PHP sides. Adding a PHP version is one row in the TSV.
 

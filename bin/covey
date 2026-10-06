@@ -59,7 +59,9 @@ core_sites()   { core sites 2>/dev/null; }
 # Declared intent, so it has to be stored; see the note in share/php/core.php.
 # Never written inside the project - covey does not touch project files.
 DISABLED_FILE="$COVEY_CONFIG/disabled"
-site_exists()   { [[ -d "$COVEY_SITES/$1" ]]; }
+# A site is whatever core.php enumerates - not merely a directory - so a
+# reserved name such as ~/Covey/mail is not one.
+site_exists()   { core_sites | cut -f1 | grep -qxF -- "$1"; }
 site_disabled() { [[ -f "$DISABLED_FILE" ]] && grep -qxF "$1" "$DISABLED_FILE"; }
 
 # --- pools ------------------------------------------------------------------

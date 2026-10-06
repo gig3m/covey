@@ -101,7 +101,7 @@ covey doctor
 | `covey install` | Render config, link systemd units and the agent skill |
 | `covey up` / `down` / `restart` | Bring the whole stack up or down (`start`/`stop` are aliases) |
 | `covey autostart [on\|off]` | Whether the stack starts at login |
-| `covey status` | Stack state, unit state, and memory in use |
+| `covey status [--json]` | Stack state, memory, services, PHP versions and settings |
 | `covey doctor [--json]` | Check the platform and every site |
 | `covey sites` | List sites, their PHP version and URLs |
 | `covey site up\|down <name>` | Take one site in or out of service |
@@ -197,10 +197,17 @@ unchanged**:
 | MySQL | `127.0.0.1:3306` | `root`, empty password |
 | PostgreSQL | `127.0.0.1:5432` | `root`, empty password (trust auth) |
 | Redis | `127.0.0.1:6379` | none |
-| Mailpit | SMTP `127.0.0.1:1025`, UI <http://127.0.0.1:8025> | none |
+| Mailpit | SMTP `127.0.0.1:1025`, UI <https://mail.localhost> | none |
 
 Databases are created explicitly with `covey db create <name>` — covey does not
 provision them behind your back.
+
+`mail.localhost` belongs to covey, so a project directory called `~/Covey/mail`
+is not served; `covey doctor` reports it as `reserved_name`.
+
+`covey status` lists the same table with live state, and `covey status --json`
+carries each service's address, credentials and the exact `.env` lines — the
+inventory the bar's config pane reads.
 
 ## Up and down
 
@@ -224,6 +231,16 @@ covey-mysql-1               171 MiB
 covey-postgres-1             50 MiB
 covey-redis-1                28 MiB
 covey-mailpit-1              21 MiB
+
+SERVICE    STATE    ADDRESS          OPEN
+mysql      up       127.0.0.1:3306   covey db shell
+postgres   up       127.0.0.1:5432
+redis      up       127.0.0.1:6379
+mailpit    up       127.0.0.1:1025   https://mail.localhost
+
+PHP        VERSION  POOL     SITES
+8.5        8.5.10   running  7
+8.3        8.3.33   stopped  -
 
 $ covey down
 covey is down

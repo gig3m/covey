@@ -52,6 +52,48 @@ function covey_extensions(): array {
     return is_file($f) ? array_values(array_filter(array_map('trim', file($f)))) : [];
 }
 
+// ---- services ----------------------------------------------------------------
+// What covey's compose stack offers a project, in one place: doctor's port
+// checks, `covey status` and the bar's config pane all read this. The ports
+// also appear in share/compose/covey.yaml, which is what actually binds them;
+// image tags are read from there rather than repeated here.
+//
+// Credentials are the ones a stock Laravel .env already uses, which is why
+// `env` can be shown verbatim: these are the lines that work unchanged.
+const SERVICES = [
+    'mysql' => ['label'=>'MySQL (MariaDB)', 'port'=>3306,
+        'user'=>'root', 'password'=>'',
+        'env'=>['DB_CONNECTION=mysql', 'DB_HOST=127.0.0.1', 'DB_PORT=3306',
+                'DB_USERNAME=root', 'DB_PASSWORD='],
+        'shell'=>'covey db shell'],
+    'postgres' => ['label'=>'PostgreSQL', 'port'=>5432,
+        'user'=>'root', 'password'=>'',
+        'env'=>['DB_CONNECTION=pgsql', 'DB_HOST=127.0.0.1', 'DB_PORT=5432',
+                'DB_USERNAME=root', 'DB_PASSWORD=']],
+    'redis' => ['label'=>'Redis', 'port'=>6379,
+        'env'=>['REDIS_HOST=127.0.0.1', 'REDIS_PORT=6379']],
+    'mailpit' => ['label'=>'Mailpit', 'port'=>1025, 'ui_port'=>8025,
+        'url'=>'https://mail.localhost',
+        'env'=>['MAIL_MAILER=smtp', 'MAIL_HOST=127.0.0.1', 'MAIL_PORT=1025']],
+];
+
+// Names covey serves itself. A ~/Covey directory with one of these names would
+// collide with covey's own Caddy block, so it is not served (see doctor).
+const RESERVED_SITES = ['mail' => 'Mailpit is served at mail.localhost'];
+
+// service => image, from the compose file. A deliberately small parse: the file
+// is covey's own and keeps `image:` directly under each service.
+function service_images(): array {
+    global $COVEY;
+    $f = "$COVEY/share/compose/covey.yaml";
+    $out = []; $svc = null;
+    foreach (is_file($f) ? file($f, FILE_IGNORE_NEW_LINES) : [] as $l) {
+        if (preg_match('/^  ([a-z0-9_-]+):\s*$/', $l, $m)) { $svc = $m[1]; continue; }
+        if ($svc && preg_match('/^    image:\s*(\S+)/', $l, $m)) $out[$svc] = $m[1];
+    }
+    return $out;
+}
+
 // ---- constraint matching ---------------------------------------------------
 function vnorm(string $v): string {
     $p = array_map('intval', array_pad(explode('.', trim($v)), 3, 0));
@@ -147,6 +189,7 @@ function sites(): array {
         $n = basename($dir);
         // Dotted names allowed: example.com -> example.com.localhost
         if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/', $n)) continue;
+        if (isset(RESERVED_SITES[strtolower($n)])) continue;
         $out[$n] = $dir;
     }
     return $out;
@@ -270,6 +313,16 @@ function platform_checks(bool $live): array {
             : chk("extensions-$series", OK);
     }
 
+    // A project directory named like one of covey's own hosts is not served;
+    // say so, rather than letting it silently not appear. Renaming it is the
+    // user's call - covey does not move project directories - so a hint only.
+    global $SITES;
+    foreach (RESERVED_SITES as $n => $why) {
+        if (is_dir("$SITES/$n")) $c[] = chk("site-$n", false, ['problem'=>'reserved_name',
+            'detail'=>"$SITES/$n is not served: $why",
+            'hint'=>"rename the directory; $n.localhost belongs to covey"]);
+    }
+
     // Browsers read NSS, not the system store; being trusted by curl says nothing.
     $nss = getenv('HOME') . '/.pki/nssdb';
     if (is_dir($nss)) {
@@ -294,7 +347,8 @@ function platform_checks(bool $live): array {
         return $c;
     }
     $c[] = chk('docker', OK);
-    foreach ([['mysql',3306],['postgres',5432],['redis',6379],['mailpit',1025]] as [$svc,$port]) {
+    foreach (SERVICES as $svc => $def) {
+        $port = $def['port'];
         $c[] = port_open('127.0.0.1', $port)
             ? chk($svc, OK, ['detail'=>"127.0.0.1:$port"])
             : chk($svc, false, ['problem'=>'service_down',
@@ -535,7 +589,75 @@ function status(bool $containers = true): array {
         if (!$r['active'] && $r['name'] !== 'covey-sync.path') $degraded = true;
 
     return ['state'=>!$live ? 'down' : ($degraded ? 'degraded' : 'up'),
-            'units'=>$units, 'containers'=>$containers ? $cs : null, 'bytes'=>$total];
+            'units'=>$units, 'containers'=>$containers ? $cs : null, 'bytes'=>$total,
+            'services'=>services_inventory($live, $cs),
+            'php'=>php_inventory($live),
+            'settings'=>settings_inventory()];
+}
+
+// ---- inventory ---------------------------------------------------------------
+// What covey provides and how to reach it - the information Herd puts in its
+// settings window. Part of `status` rather than doctor: none of it is a check,
+// and all of it is cheap (no HTTP, no composer). Doctor says whether it is
+// right; this says what it is.
+
+// $cs: container memory already measured by status(), reused rather than
+// paying for a second `docker stats` sample.
+function services_inventory(bool $live, array $cs): array {
+    $images = service_images();
+    $mem = [];
+    foreach ($cs as $c) if (preg_match('/^covey-(.+)-\d+$/', $c['name'], $m)) $mem[$m[1]] = $c['bytes'];
+    $out = [];
+    foreach (SERVICES as $name => $d) {
+        $out[] = array_merge(['name'=>$name, 'label'=>$d['label'],
+            'image'=>$images[$name] ?? null,
+            'up'=>$live && port_open('127.0.0.1', $d['port']),
+            'host'=>'127.0.0.1', 'port'=>$d['port'],
+            'bytes'=>$mem[$name] ?? null,
+            'env'=>$d['env']],
+            array_intersect_key($d, array_flip(['user', 'password', 'ui_port', 'url', 'shell'])));
+    }
+    return $out;
+}
+
+function php_inventory(bool $live): array {
+    $using = [];
+    foreach (sites() as $n => $d) {
+        if (!site_enabled($n)) continue;
+        $using[resolve_site($d)['tag']][] = $n;
+    }
+    $want = covey_extensions();
+    $out = [];
+    foreach (providers() as $tag => $p) {
+        $installed = tag_installed($tag);
+        $ext = null;
+        if ($installed) {
+            $loaded = strtolower((string)@shell_exec(escapeshellarg($p['php']) . ' -m 2>/dev/null'));
+            $loaded = array_flip(preg_split('/\s+/', $loaded, -1, PREG_SPLIT_NO_EMPTY) ?: []);
+            $ext = [];
+            foreach ($want as $e) $ext[$e] = isset($loaded[strtolower($e)]);
+        }
+        // (string): PHP turns the numeric key "85" into int 85, and the
+        // site model already reports tags as strings.
+        $out[] = ['tag'=>(string)$tag, 'series'=>$p['series'], 'installed'=>$installed,
+                  'version'=>$installed ? tag_version($tag) : null,
+                  'pool'=>$live && unit_active("covey-fpm@$tag.service"),
+                  'sites'=>$using[$tag] ?? [],
+                  'extensions'=>$ext,
+                  'install'=>$installed ? null : "covey php install $tag"];
+    }
+    return $out;
+}
+
+function settings_inventory(): array {
+    global $SITES, $CONFIG, $DEFAULT;
+    $en = trim((string)@shell_exec('systemctl --user is-enabled covey.target 2>/dev/null'));
+    $ups = @file_get_contents('/proc/sys/net/ipv4/ip_unprivileged_port_start');
+    return ['sites_root'=>$SITES, 'config_dir'=>$CONFIG,
+            'default_php'=>provider($DEFAULT)['series'] ?? $DEFAULT,
+            'autostart'=>$en === 'enabled',
+            // User services can only bind :80/:443 when this is <= 80.
+            'unprivileged_port_start'=>$ups === false ? null : (int)trim($ups)];
 }
 
 function render_status(array $d): int {
@@ -556,6 +678,17 @@ function render_status(array $d): int {
         foreach ($d['containers'] as $c)
             printf("%-26s %8s\n", $c['name'], $c['bytes'] === null ? '-' : mib($c['bytes']));
     }
+
+    printf("\n%-10s %-8s %-16s %s\n", 'SERVICE', 'STATE', 'ADDRESS', 'OPEN');
+    foreach ($d['services'] as $s)
+        printf("%-10s %-8s %-16s %s\n", $s['name'], $s['up'] ? 'up' : 'down',
+               "{$s['host']}:{$s['port']}", $s['url'] ?? ($s['shell'] ?? ''));
+
+    printf("\n%-10s %-8s %-8s %s\n", 'PHP', 'VERSION', 'POOL', 'SITES');
+    foreach ($d['php'] as $p)
+        printf("%-10s %-8s %-8s %s\n", $p['series'], $p['version'] ?? '-',
+               !$p['installed'] ? 'n/a' : ($p['pool'] ? 'running' : 'stopped'),
+               $p['installed'] ? (count($p['sites']) ?: '-') : $p['install']);
     if ($d['state'] === 'down') echo "\ncovey is stopped - run `covey up` to start it\n";
     return $d['state'] === 'up' ? 0 : 1;
 }
