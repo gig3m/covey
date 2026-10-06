@@ -4,28 +4,49 @@
 	admin localhost:2019
 }
 
-# Shared site definition.
+# The app itself: root, PHP and static files.
 #   args[0] = site directory
 #   args[1] = php-fpm socket
-# A wildcard cert (*.localhost) can't be used: TLS clients reject a wildcard
-# with only one label after it, so each site gets its own named block + cert.
-(covey_site) {
-	tls internal
-
+# HTTPS=on is passed to PHP explicitly because a shared site (below) arrives as
+# plain HTTP from the tunnel; the visitor's connection is HTTPS, and without
+# this the app would generate http:// links. For a .localhost site it is
+# already on, so setting it is a no-op there.
+(covey_app) {
 	root * {args[0]}
 
 	# Framework layout (public/index.php) wins; otherwise serve the dir itself.
 	@public file public/index.php
 	handle @public {
 		root * {args[0]}/public
-		php_fastcgi unix/{args[1]}
+		php_fastcgi unix/{args[1]} {
+			env HTTPS on
+		}
 		file_server
 	}
 
 	handle {
-		php_fastcgi unix/{args[1]}
+		php_fastcgi unix/{args[1]} {
+			env HTTPS on
+		}
 		file_server
 	}
+}
+
+# A site at https://<name>.localhost.
+# A wildcard cert (*.localhost) can't be used: TLS clients reject a wildcard
+# with only one label after it, so each site gets its own named block + cert.
+(covey_site) {
+	tls internal
+	import covey_app {args[0]} {args[1]}
+}
+
+# A site being shared with `covey share`: a loopback-only plain-HTTP listener
+# that serves the site whatever Host header arrives, which is what a tunnel
+# sends (xyz.trycloudflare.com). The tunnel terminates TLS; this never faces
+# the network directly.
+(covey_shared) {
+	bind 127.0.0.1
+	import covey_app {args[0]} {args[1]}
 }
 
 # A site taken down with `covey site down`. It keeps a block (and therefore a

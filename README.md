@@ -30,6 +30,7 @@ tells you why.
 - [Services](#services)
 - [Up and down](#up-and-down)
 - [Per-site up and down](#per-site-up-and-down)
+- [Sharing a site](#sharing-a-site)
 - [Certificates](#certificates)
 - [`covey doctor`](#covey-doctor)
 - [Status bar](#status-bar)
@@ -62,6 +63,7 @@ resolves every `*.localhost` name to loopback, so covey has no `dnsmasq`, no
 - `systemd-resolved` (for `*.localhost` resolution)
 - Docker, for the optional MySQL/PostgreSQL/Redis/Mailpit stack
 - `omarchy-shell`, for the optional status-bar widget
+- `cloudflared`, for the optional `covey share`
 
 ## Install
 
@@ -106,6 +108,7 @@ covey doctor
 | `covey sites` | List sites, their PHP version and URLs |
 | `covey site up\|down <name>` | Take one site in or out of service |
 | `covey site solo <name>` / `restore` | Serve only one site; put the rest back |
+| `covey share [<name>]` / `covey unshare <name>\|--all` | Put a site on a public URL; list or end shares |
 | `covey sync` | Regenerate site config from `~/Covey`, reload |
 | `covey php list` | Show PHP providers |
 | `covey php install <tag>` | Install a PHP provider |
@@ -360,6 +363,48 @@ covey: solo ended, sites restored
 a half-finished project you had switched off stays off. Soloing a second site
 while already in solo keeps that original list. `covey doctor` shows a `SOLO`
 line while it is in effect, and the saved list lives in `~/.config/covey/solo`.
+
+## Sharing a site
+
+Put a site on a public URL — to show a client, or to test on a phone that is
+not on your network:
+
+```console
+$ covey share shop
+covey: shop is shared at https://words-like-these.trycloudflare.com
+covey: anyone with the URL can reach this site. With APP_DEBUG=true an
+error page shows your .env - turn it off, or share for as long as you need.
+end it with: covey unshare shop
+
+$ covey share            # what is shared
+$ covey unshare --all
+```
+
+It uses [cloudflared](https://github.com/cloudflare/cloudflared) quick tunnels
+(`sudo pacman -S cloudflared`): no account, no token, a new random URL each
+time. The flyout's `share` / `unshare` / `link` actions and the settings
+window's Sharing section do the same thing.
+
+How it fits together:
+
+- **covey gives a shared site a loopback listener** on `127.0.0.1:41xxx` (the
+  port comes from the site name) that serves it whatever `Host` arrives, and
+  tells PHP the request is HTTPS so the app builds `https://` links.
+- **The tunnel is one row of data**, in `share/tunnels.tsv`: the binary, its
+  arguments, and a regex that finds the public URL in its output. Another tool
+  (ngrok, a named Cloudflare tunnel) is another row moved to the top — covey is
+  not tied to Cloudflare.
+- **A share is a user unit**, `covey-share@<site>.service`, under
+  `covey.target`. Whether a site is shared is read from systemd, so `covey down`
+  ends every share, and nothing comes back by itself at `covey up` or login.
+  Taking a site down (or soloing another) ends its share too.
+
+Limits: quick tunnels are best effort (no uptime guarantee, rate limited), so
+they suit a demo, not a webhook you depend on. The URL is held back until
+public DNS has it, but if your machine looked it up too early and cached the
+miss, `resolvectl flush-caches`. covey does not touch the app, so if it
+generates links from `APP_URL` they will still say `.localhost` — doctor's
+share check shows the public URL; fixing the app's config is yours.
 
 ## Certificates
 

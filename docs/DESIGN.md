@@ -286,6 +286,28 @@ was off before it, in `~/.config/covey/solo`, and `covey site restore` puts
 that list back. It is the same kind of file as `disabled`: declared intent,
 input to the model, nothing else on the machine knows it.
 
+## 10a. Sharing, and why the tunnel is a row of data
+
+Herd shares a site through Expose, which is Beyond Code's own service: a free
+account with a session time limit, paid for persistent URLs. covey's
+equivalent had to avoid exactly that kind of coupling, so it is split at the
+seam that matters:
+
+- **covey's half is a loopback listener per shared site** - a Caddy block on
+  `127.0.0.1:41xxx` that serves the site for any Host, with HTTPS=on passed to
+  PHP. That is the real work, and it is the same for every tunnel tool.
+- **The tool's half is one row** of `share/tunnels.tsv`: binary, arguments,
+  and a regex that finds the URL in its output. cloudflared quick tunnels are
+  the default (no account, one binary from `extra`); Tailscale Funnel was
+  considered and rejected as the default for coupling covey to one network
+  product and capping public shares at three ports.
+
+The state rule held without strain: a share is a running user unit, so
+`shares()` asks systemd, the URL is read from the current invocation's journal,
+and nothing is stored. Sharing is ephemeral by construction - no `[Install]`,
+`PartOf=covey.target` - because a quick tunnel's URL is new every run anyway,
+and silently re-publishing a dev site at login would be the wrong default.
+
 ## 11. What running a real application changed
 
 The design was validated by cloning an actual Laravel 12 app, not by reasoning.

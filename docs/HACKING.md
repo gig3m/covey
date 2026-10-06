@@ -18,7 +18,8 @@ forget why they were turned down.
 covey manages **the platform**. It never modifies files inside a project.
 
 - **In:** serving, TLS, PHP versions and extensions, MySQL/Redis/Mailpit,
-  databases on request, and checks for all of the above.
+  databases on request, sharing a site on a public URL (Herd's Share), and
+  checks for all of the above.
 - **Out:** `.env`, `APP_KEY`, `storage/` permissions, `composer install`,
   `vendor/`, npm/asset builds, queue workers, schedulers.
 
@@ -128,6 +129,22 @@ environment.
   `StartLimitBurst`, the pool went `failed`, and every site 502'd until
   `systemctl --user reset-failed`. `ensure_php_pool` reloads only when the
   rendered config changed, then waits for the socket to accept.
+- **`cmd_sync` takes the site lock itself, and the lock is re-entrant.** Two
+  bar instances sharing at once (or a share racing the `covey-sync.path`
+  watcher) ran two syncs over each other and failed writing a pool config.
+  Commands that mutate then sync hold the same lock; `covey share` releases it
+  before its slow wait for the URL.
+- **A quick tunnel's hostname is not in DNS for a few seconds, and Cloudflare's
+  resolvers do not agree on when.** A lookup made too early is negatively
+  cached by systemd-resolved (seen: AAAA present, A cached as missing, so
+  connections failed on a box with no IPv6). `covey share` waits until both
+  1.1.1.1 and 1.0.0.1 answer an A query over DoH before printing the URL - and
+  never looks the name up locally itself. Test a fresh share with that in mind;
+  `resolvectl flush-caches` clears a poisoned entry.
+- **A tunnel that dies leaves its loopback listener in the Caddyfile** until
+  the next sync (systemd does not tell covey). `covey share` syncs before its
+  port check and `covey up` syncs after start, so a stale listener can neither
+  block a re-share nor outlive a stack restart.
 - **`covey-sync.path` watches only the top level of `~/Covey`.** New and removed
   sites are caught; edits to a site's `.covey` or `composer.json` are not. Run
   `covey sync`.

@@ -94,6 +94,53 @@ function service_images(): array {
     return $out;
 }
 
+// ---- sharing -----------------------------------------------------------------
+// `covey share <site>` puts a site on a public URL through a tunnel tool. The
+// tool is data (share/tunnels.tsv), not code, so covey is not tied to any one
+// vendor: the first row is the one used.
+function tunnel(): ?array {
+    global $COVEY;
+    foreach (file("$COVEY/share/tunnels.tsv", FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $l) {
+        if ($l === '' || $l[0] === '#') continue;
+        $f = explode("\t", $l);
+        if (count($f) < 5) continue;
+        return ['name'=>$f[0], 'bin'=>$f[1], 'pkg'=>$f[2], 'args'=>$f[3], 'url_regex'=>$f[4]];
+    }
+    return null;
+}
+
+// The loopback port a shared site's listener uses. Derived from the name, so
+// the Caddy block and the tunnel unit agree without storing anything.
+// 41000-41999; @PORT2@ (the tool's own port) is this + 1000.
+function share_port(string $name): int { return 41000 + crc32($name) % 1000; }
+
+// Sites being shared, from systemd: a share is a running unit, so - as with
+// the stack - there is no marker file to drift from it. name => unit state.
+function shares(): array {
+    $out = (string)@shell_exec("systemctl --user list-units 'covey-share@*' --all --plain --no-legend 2>/dev/null");
+    $res = [];
+    foreach (explode("\n", $out) as $l) {
+        $f = preg_split('/\s+/', trim($l));
+        if (count($f) < 3 || !preg_match('/^covey-share@(.+)\.service$/', $f[0], $m)) continue;
+        // f: unit load active sub
+        if (in_array($f[2], ['active', 'activating', 'failed'], true)) $res[$m[1]] = $f[2];
+    }
+    return $res;
+}
+
+// The public URL, from the current run of the unit's journal. Each run of a
+// quick tunnel gets a new URL, so only this invocation's output counts.
+function share_url(string $name): ?string {
+    $t = tunnel();
+    if (!$t) return null;
+    $u = escapeshellarg("covey-share@$name.service");
+    $inv = trim((string)@shell_exec("systemctl --user show -p InvocationID --value $u 2>/dev/null"));
+    if ($inv === '') return null;
+    $log = (string)@shell_exec("journalctl --user -u $u _SYSTEMD_INVOCATION_ID=" . escapeshellarg($inv)
+        . ' -o cat --no-pager 2>/dev/null');
+    return preg_match_all('#' . str_replace('#', '\#', $t['url_regex']) . '#', $log, $m) ? end($m[0]) : null;
+}
+
 // ---- php.ini settings --------------------------------------------------------
 // The settings a served site sees, applied to every FPM pool as php_value
 // lines (so an app can still ini_set() over them, as with a real php.ini).
@@ -509,6 +556,22 @@ function site_report(string $name, string $dir, bool $live): array {
         $checks[] = chk('php', OK, ['detail'=>tag_version($r['tag']) . " (from {$r['source']})"]);
     }
 
+    // Sharing. A running share is a state, reported on the site; a share
+    // whose unit failed is a failure, with a retry as its fix.
+    $sh = shares()[$name] ?? null;
+    if ($sh !== null) {
+        $url = $sh === 'failed' ? null : share_url($name);
+        $ident['share'] = ['state'=>$sh, 'url'=>$url, 'port'=>share_port($name),
+                           'tunnel'=>tunnel()['name'] ?? null];
+        $checks[] = $sh === 'failed'
+            ? chk('share', false, ['problem'=>'share_failed',
+                'detail'=>"the tunnel for $name stopped (journalctl --user -u covey-share@$name)",
+                'fix'=>fix("covey share $name")])
+            : chk('share', OK, ['detail'=>$url ?? 'starting']);
+    } else {
+        $ident['share'] = null;
+    }
+
     $pr = platform_reqs_check($dir, $r['tag']);
     if ($pr !== null) $checks[] = $pr;
 
@@ -641,6 +704,9 @@ function status(bool $containers = true): array {
             'services'=>services_inventory($live, $cs),
             'php'=>php_inventory($live),
             'php_ini'=>php_ini_inventory(),
+            'shares'=>array_map(fn($n, $st) => ['site'=>$n, 'state'=>$st,
+                'url'=>$st === 'failed' ? null : share_url($n), 'port'=>share_port($n)],
+                array_keys(shares()), array_values(shares())),
             'settings'=>settings_inventory()];
 }
 
@@ -825,6 +891,24 @@ if ($cmd === 'sites') {
     }
     exit(0);
 }
+// Sharing, for bin/covey: one place computes ports and reads systemd.
+//   shares          -> name \t port \t state      (every share unit)
+//   share-port <n>  -> port
+//   share-url <n>   -> url (empty until the tunnel reports one)
+//   tunnel          -> name \t bin \t pkg \t args \t url_regex
+if ($cmd === 'shares') {
+    foreach (shares() as $n => $st) printf("%s\t%d\t%s\n", $n, share_port($n), $st);
+    exit(0);
+}
+if ($cmd === 'share-port') { echo share_port((string)($argv[2] ?? '')), "\n"; exit(0); }
+if ($cmd === 'share-url')  { echo share_url((string)($argv[2] ?? '')) ?? '', "\n"; exit(0); }
+if ($cmd === 'tunnel') {
+    $t = tunnel();
+    if (!$t) exit(1);
+    echo implode("\t", [$t['name'], $t['bin'], $t['pkg'], $t['args'], $t['url_regex']]), "\n";
+    exit(0);
+}
+
 // The effective php.ini settings, for `covey sync` to render into each pool.
 // Emits: key \t value
 if ($cmd === 'ini') {

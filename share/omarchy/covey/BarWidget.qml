@@ -41,7 +41,7 @@ BarWidget {
   // The switch shows this value so the knob throws on click, not on refresh.
   property var pending: ({})
   readonly property var blankSite: ({ name: "", url: "", path: "", php: "", ok: true,
-                                       state: "", enabled: true })
+                                       state: "", enabled: true, share: "", shared: false })
   readonly property bool siteBusy: siteProc.running || root.queue.length > 0
 
   readonly property var liveSites: root.sites.filter(function (x) { return x.enabled })
@@ -141,6 +141,8 @@ BarWidget {
       if (live) versions[ver] = true
       list.push({ name: String(site.name), url: String(site.url),
                   path: String(site.path || ""),
+                  share: site.share && site.share.state !== "failed" ? String(site.share.url || "") : "",
+                  shared: !!(site.share && site.share.state !== "failed"),
                   php: ver, ok: st.ok, state: st.text, enabled: live })
     }
 
@@ -154,7 +156,7 @@ BarWidget {
     root.healthy = d.ok === true
     // Only once every queued command has finished is the model the truth;
     // before that it can predate a switch that was just flipped.
-    if (!root.siteBusy) root.pending = ({})
+    if (!root.siteBusy) { root.pending = ({}); root.sharing = ({}) }
     root.tooltip = stackSt === "down"
       ? "covey — stopped (click to start)"
       : (root.failures === 0
@@ -190,15 +192,23 @@ BarWidget {
   // Per-site commands. Like setStack, these run once, on the clicked instance;
   // when the queue drains, every instance is told to refresh. `covey sync`
   // drops doctor's cache, so that refresh reads the new model.
-  function runSite(args) {
+  function runSite(args) { runCovey(["site"].concat(args)) }
+  function runCovey(args) {
     root.queue = root.queue.concat([args])
     if (!siteProc.running) runNext()
+  }
+  // Sharing takes several seconds (tunnel up, then public DNS). Mark the row
+  // until the model says it changed.
+  property var sharing: ({})
+  function setShare(name, on) {
+    var m = Object.assign({}, root.sharing); m[name] = true; root.sharing = m
+    runCovey(on ? ["share", name] : ["unshare", name])
   }
   function runNext() {
     if (root.queue.length === 0) { root.broadcast("refresh"); return }
     var next = root.queue[0]
     root.queue = root.queue.slice(1)
-    siteProc.command = [root.coveyBin, "site"].concat(next)
+    siteProc.command = [root.coveyBin].concat(next)
     siteProc.running = true
   }
   function setSite(name, up) {
@@ -476,7 +486,10 @@ BarWidget {
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: !siteRow.hot
-                    text: !siteRow.site.enabled ? "off" : (siteRow.site.ok ? siteRow.site.php : siteRow.site.state)
+                    text: root.sharing[siteRow.site.name] ? "sharing\u2026"
+                        : !siteRow.site.enabled ? "off"
+                        : !siteRow.site.ok ? siteRow.site.state
+                        : siteRow.site.shared ? "shared" : siteRow.site.php
                     color: (siteRow.site.ok || !siteRow.site.enabled)
                              ? Qt.darker(Color.popups.text, 1.5) : Color.urgent
                     font.family: root.uiFont
@@ -494,6 +507,23 @@ BarWidget {
                     text: "solo"
                     font.family: root.uiFont
                     onActivated: root.runSite(["solo", siteRow.site.name])
+                  }
+                  // Sharing puts the site on a public URL (cloudflared); `link`
+                  // copies that URL. Only an enabled site can be shared.
+                  LinkText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: siteRow.hot && siteRow.site.enabled && root.stackState !== "down"
+                             && !root.sharing[siteRow.site.name]
+                    text: siteRow.site.shared ? "unshare" : "share"
+                    font.family: root.uiFont
+                    onActivated: root.setShare(siteRow.site.name, !siteRow.site.shared)
+                  }
+                  LinkText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: siteRow.hot && siteRow.site.share !== ""
+                    text: "link"
+                    font.family: root.uiFont
+                    onActivated: Quickshell.execDetached(["wl-copy", siteRow.site.share])
                   }
                   LinkText {
                     anchors.verticalCenter: parent.verticalCenter

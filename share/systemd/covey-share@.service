@@ -1,0 +1,14 @@
+[Unit]
+Description=Covey share tunnel for %i
+# Sharing is explicit and ephemeral: no [Install], so a share never comes back
+# by itself at login or on `covey up`, and PartOf= ends it on `covey down`.
+PartOf=covey.target
+After=covey-caddy.service
+StartLimitIntervalSec=120
+StartLimitBurst=4
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/covey/bin/covey share-exec %i
+Restart=on-failure
+RestartSec=5

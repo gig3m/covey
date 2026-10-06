@@ -97,6 +97,7 @@ ensure_php_pool() {
   local changed=1
   cmp -s "$tmp" "$conf" && changed=0
   mv "$tmp" "$conf"
+  chmod 644 "$conf"
   echo "COVEY_FPM_BIN=$(fpm_bin "$ver")" > "$COVEY_CONFIG/php/$ver.env"
   systemctl --user add-wants covey.target "covey-fpm@$ver.service" >/dev/null 2>&1 || true
   if systemctl --user is-active --quiet "covey-fpm@$ver.service"; then
@@ -162,7 +163,7 @@ cmd_install() {
   mkdir -p "$COVEY_CONFIG/php" "$COVEY_SITES" "$UNIT_DIR" "$HOME/.claude/skills"
   [[ -e "$COVEY_HOME" && ! -L "$COVEY_HOME" ]] && die "$COVEY_HOME exists and is not a symlink"
   ln -sfn "$src" "$COVEY_HOME"
-  for u in covey.target covey-caddy.service 'covey-fpm@.service' covey-sync.service covey-sync.path covey-services.service; do
+  for u in covey.target covey-caddy.service 'covey-fpm@.service' 'covey-share@.service' covey-sync.service covey-sync.path covey-services.service; do
     ln -sfn "$COVEY_HOME/share/systemd/$u" "$UNIT_DIR/$u"
   done
   ln -sfn "$COVEY_HOME/agents/skills/covey" "$HOME/.claude/skills/covey"
@@ -188,6 +189,7 @@ cmd_install() {
 }
 
 cmd_sync() {
+  site_lock
   local out="$COVEY_CONFIG/Caddyfile" tmp; tmp="$(mktemp)"
   render "$COVEY_SRC/share/caddy/Caddyfile.in" "$tmp"
   # Enumeration, name validation and version resolution all come from core.php,
@@ -207,6 +209,23 @@ cmd_sync() {
     fi
   done < <(core_sites)
   [[ $((n + off)) -eq 0 ]] && printf '\nlocalhost {\n\trespond "covey: no sites in %s"\n}\n' "$COVEY_SITES" >> "$tmp"
+
+  # Shared sites get a loopback listener for their tunnel. A share whose site
+  # is no longer served (taken down, soloed away, deleted) is ended here, so
+  # nothing is published that covey is not serving.
+  local sname sport sstate sdir
+  while IFS=$'\t' read -r sname sport sstate; do
+    [[ -n "$sname" ]] || continue
+    sdir="$(core_sites | awk -F'\t' -v n="$sname" '$1 == n && $4 == "1" {print $2"\t"$3}')"
+    if [[ -z "$sdir" ]]; then
+      systemctl --user stop "covey-share@$sname.service" 2>/dev/null || true
+      systemctl --user reset-failed "covey-share@$sname.service" 2>/dev/null || true
+      continue
+    fi
+    [[ "$sstate" == "failed" ]] && continue
+    printf '\nhttp://:%s {\n\timport covey_shared %s %s/covey/php%s.sock\n}\n' \
+      "$sport" "${sdir%%$'\t'*}" "$COVEY_RUNTIME" "${sdir##*$'\t'}" >> "$tmp"
+  done < <(core shares 2>/dev/null)
 
   if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
     caddy validate --config "$tmp" --adapter caddyfile 2>&1 | grep -iE 'error' | head -3 >&2
@@ -396,6 +415,9 @@ drop_doctor_cache() { rm -f "$COVEY_RUNTIME/covey/doctor.json"; }
 cmd_up() {
   docker_ok || warn "docker is not available - services (mysql, redis, mailpit) will not start"
   systemctl --user start covey.target
+  # Shares do not survive `covey down`, but their listeners are still in the
+  # Caddyfile it was stopped with. Re-render so the config matches what runs.
+  cmd_sync >/dev/null || true
   drop_doctor_cache
   cmd_status
 }
@@ -449,10 +471,21 @@ cmd_sites() {
 # quick succession, and two of these racing would interleave rewrites of the
 # disabled list and run sync twice over each other.
 SOLO_FILE="$COVEY_CONFIG/solo"
+#
+# Re-entrant within one process (site commands call sync while holding it), and
+# taken by cmd_sync itself: two bar instances sharing at once, or a share racing
+# the covey-sync.path watcher, once ran two syncs over each other's pool config.
 site_lock() {
+  [[ -n "${COVEY_LOCK_HELD:-}" ]] && return 0
   mkdir -p "$COVEY_RUNTIME/covey" "$COVEY_CONFIG"
   exec 9>"$COVEY_RUNTIME/covey/site.lock"
   flock 9
+  COVEY_LOCK_HELD=1
+}
+site_unlock() {
+  [[ -n "${COVEY_LOCK_HELD:-}" ]] || return 0
+  flock -u 9
+  unset COVEY_LOCK_HELD
 }
 # Replace the disabled list with stdin, atomically.
 write_disabled() {
@@ -511,6 +544,138 @@ cmd_site() {
   esac
 }
 
+# --- sharing -------------------------------------------------------------------
+# `covey share <site>` publishes a site through the tunnel in share/tunnels.tsv
+# (cloudflared by default). A share is a user unit, covey-share@<site>, under
+# covey.target: its state is systemd's, and `covey down` ends it.
+SHARE_WARNING="anyone with the URL can reach this site. With APP_DEBUG=true an
+error page shows your .env - turn it off, or share for as long as you need."
+
+share_url_wait() {
+  local name="$1" i url
+  for i in $(seq 1 60); do
+    url="$(core share-url "$name")"
+    [[ -n "$url" ]] && { echo "$url"; return 0; }
+    systemctl --user is-failed --quiet "covey-share@$name.service" && return 1
+    sleep 0.5
+  done
+  return 1
+}
+
+# A quick tunnel's hostname is created with the tunnel and takes a few seconds
+# to appear in DNS. Resolvers cache the "not found" from a lookup made before
+# then, so a URL opened the instant it is printed can fail for minutes. Hold
+# it back until public DNS answers (bounded; best effort).
+# Cloudflare's resolvers pick a new name up at different moments (seen: one
+# answering while another still said NXDOMAIN), so wait for two of them.
+wait_for_dns() {
+  local host="${1#https://}" i r ok
+  for i in $(seq 1 30); do
+    ok=1
+    for r in 1.1.1.1 1.0.0.1; do
+      curl -s -m 3 -H 'accept: application/dns-json' \
+        "https://$r/dns-query?name=$host&type=A" 2>/dev/null | grep -q '"Answer"' || ok=0
+    done
+    [[ $ok -eq 1 ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+cmd_share() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    local found=0 n port st
+    while IFS=$'\t' read -r n port st; do
+      [[ -n "$n" ]] || continue; found=1
+      printf '%-20s %-10s %s\n' "$n" "$st" "$(core share-url "$n")"
+    done < <(core shares)
+    [[ $found -eq 0 ]] && echo "no sites are shared (covey share <site>)"
+    return 0
+  fi
+  systemctl --user is-active --quiet covey.target || die "covey is down (covey up first)"
+  site_exists "$name" || die "no such site: $name (try: covey sites)"
+  site_disabled "$name" && die "$name is off (covey site up $name first)"
+  local row bin pkg
+  row="$(core tunnel)" || die "no tunnel configured in share/tunnels.tsv"
+  IFS=$'\t' read -r _ bin pkg _ _ <<< "$row"
+  [[ -x "$bin" ]] || die "$bin is not installed (sudo pacman -S $pkg)"
+
+  local unit="covey-share@$name.service" port url
+  site_lock
+  if systemctl --user is-active --quiet "$unit"; then
+    url="$(core share-url "$name")"
+    echo "covey: $name is already shared${url:+ - $url}"; return 0
+  fi
+  # A tunnel that ended on its own (crashed, `covey down`) leaves its listener
+  # in the Caddyfile until the next sync; drop it first, or the port check
+  # below would mistake covey's own stale listener for someone else's.
+  cmd_sync >/dev/null
+  port="$(core share-port "$name")"
+  # Ports come from the site name, so two sites can collide; and something
+  # else may simply be listening there. Refuse rather than share the wrong thing.
+  local other op ost
+  while IFS=$'\t' read -r other op ost; do
+    [[ "$other" != "$name" && "$op" == "$port" && "$ost" != "failed" ]] && \
+      die "$name and $other would share loopback port $port (covey unshare $other first)"
+  done < <(core shares)
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    die "something else is listening on 127.0.0.1:$port, which $name's share needs"
+  fi
+
+  systemctl --user reset-failed "$unit" 2>/dev/null || true
+  systemctl --user start "$unit"
+  cmd_sync >/dev/null
+  # Waiting for the URL and DNS takes seconds; do not hold up other commands.
+  site_unlock
+  if url="$(share_url_wait "$name")"; then
+    wait_for_dns "$url" || warn "$url is not in public DNS yet; give it a few seconds"
+    # A poll while the tunnel came up cached the share without its URL.
+    drop_doctor_cache
+    omarchy-shell covey refresh >/dev/null 2>&1 || true
+    echo "covey: $name is shared at $url"
+    warn "$SHARE_WARNING"
+    echo "end it with: covey unshare $name"
+  else
+    die "the tunnel did not report a URL (journalctl --user -u $unit)"
+  fi
+}
+
+cmd_unshare() {
+  local name="${1:-}" n
+  [[ -n "$name" ]] || die "usage: covey unshare <site>|--all"
+  site_lock
+  if [[ "$name" == "--all" ]]; then
+    while IFS=$'\t' read -r n _ _; do
+      [[ -n "$n" ]] || continue
+      systemctl --user stop "covey-share@$n.service" 2>/dev/null || true
+      systemctl --user reset-failed "covey-share@$n.service" 2>/dev/null || true
+    done < <(core shares)
+    cmd_sync >/dev/null
+    echo "covey: no sites are shared"; return 0
+  fi
+  local unit="covey-share@$name.service"
+  if ! core shares | cut -f1 | grep -qxF -- "$name"; then
+    echo "covey: $name is not shared"; return 0
+  fi
+  systemctl --user stop "$unit" 2>/dev/null || true
+  systemctl --user reset-failed "$unit" 2>/dev/null || true
+  cmd_sync >/dev/null
+  echo "covey: $name is no longer shared"
+}
+
+# Run by covey-share@<site>.service; not for direct use.
+cmd_share_exec() {
+  local name="${1:?}" row bin args port
+  row="$(core tunnel)" || die "no tunnel configured in share/tunnels.tsv"
+  IFS=$'\t' read -r _ bin _ args _ <<< "$row"
+  port="$(core share-port "$name")"
+  args="${args//@PORT2@/$((port + 1000))}"
+  args="${args//@PORT@/$port}"
+  # shellcheck disable=SC2086 # args is a word list from tunnels.tsv
+  exec "$bin" $args
+}
+
 cmd_logs() {
   case "${1:-caddy}" in
     caddy) journalctl --user -u covey-caddy.service -n "${2:-50}" --no-pager ;;
@@ -534,6 +699,8 @@ covey - local PHP development environment
   covey sites                list sites, their PHP version and URLs
   covey site [up|down] <n>   take one site in or out of service
   covey site solo <n>        serve only this site; covey site restore undoes it
+  covey share [<n>]          put a site on a public URL (cloudflared); list shares
+  covey unshare <n>|--all    end a share
   covey php [list|install T|configure T]  PHP providers and extensions
   covey php settings|set K V|unset K      php.ini values for served sites
   covey services [up|down|status|logs]
@@ -559,6 +726,9 @@ case "${1:-}" in
   trust)   shift; cmd_trust "$@" ;;
   sites)   shift; cmd_sites "$@" ;;
   site)    shift; cmd_site "$@" ;;
+  share)   shift; cmd_share "$@" ;;
+  unshare) shift; cmd_unshare "$@" ;;
+  share-exec) shift; cmd_share_exec "$@" ;;
   services) shift; cmd_services "$@" ;;
   db)      shift; cmd_db "$@" ;;
   logs)    shift; cmd_logs "$@" ;;

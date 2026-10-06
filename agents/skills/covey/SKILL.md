@@ -38,6 +38,8 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey site solo <n>      serve only this site; `covey site restore` undoes it
     covey php [list|install <tag>|configure <tag>]
     covey php settings|set <key> <value>|unset <key>
+    covey share [<n>]        public URL for a site (cloudflared); no arg lists shares
+    covey unshare <n>|--all  end a share
     covey services [up|down|status|logs]
     covey db [list|create <name>|drop <name>|shell]
     covey logs [caddy|php]   tail logs
@@ -190,6 +192,23 @@ silent no-op.
 "everything on"). Doctor's JSON carries `"solo": "<name>"` (or `null`) while it
 is in effect. Like `site down`, ending solo is the user's call - do not run
 `restore` to "fix" sites that solo switched off.
+
+## Sharing
+
+    covey share shop         # prints https://<random>.trycloudflare.com
+    covey share              # list shares and their URLs
+    covey unshare shop       # or --all
+
+**Sharing publishes a dev site to the internet. Only share when the user asks
+for it, and never as a "fix".** A shared Laravel app with `APP_DEBUG=true`
+leaks `.env` on any error page - say so when you share.
+
+A share is the user unit `covey-share@<site>.service`; state comes from
+systemd. The site's doctor entry carries `"share": {state, url, port, tunnel}`
+(or `null`), and a passing `share` check whose detail is the URL. `covey down`,
+`covey site down` and solo end shares; nothing re-shares by itself. Requires
+`cloudflared` (`sudo pacman -S cloudflared`); the tunnel is configured as data
+in `share/tunnels.tsv`.
 
 ## Up and down
 

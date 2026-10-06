@@ -472,6 +472,60 @@ Item {
                   }
                 }
 
+                // Sharing: a public URL through the tunnel in share/tunnels.tsv.
+                PanelSectionHeader { text: "SHARING"; foreground: root.fg; fontFamily: root.uiFont }
+                Item {
+                  width: parent.width
+                  height: shareBtn.implicitHeight
+                  readonly property var sh: root.site ? root.site.share : null
+                  Text {
+                    anchors.left: parent.left
+                    anchors.right: shareBtn.left
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: !parent.sh ? (root.site && root.site.enabled === false ? "Turn the site on to share it."
+                                        : "Not shared. Share puts it on a public trycloudflare.com URL.")
+                        : parent.sh.state === "failed" ? "The tunnel stopped. Share again to retry."
+                        : (parent.sh.url || "starting\u2026")
+                    color: parent.sh && parent.sh.state === "failed" ? Color.urgent
+                         : parent.sh ? root.fg : root.dim
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
+                  Button {
+                    id: shareBtn
+                    anchors.right: parent.right
+                    enabled: !root.busy && root.stackState !== "down" && !!root.site && root.site.enabled !== false
+                    text: parent.sh && parent.sh.state !== "failed" ? "Stop sharing" : "Share"
+                    bordered: true; fontFamily: root.uiFont; fontSize: Style.font.bodySmall; foreground: root.fg
+                    onClicked: root.run(parent.sh && parent.sh.state !== "failed"
+                                        ? ["unshare", root.site.name] : ["share", root.site.name])
+                  }
+                }
+                Flow {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  visible: !!(root.site && root.site.share && root.site.share.url)
+                  Button {
+                    text: "Copy public URL"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                    onClicked: root.copy(root.site.share.url)
+                  }
+                  Button {
+                    text: "Open"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                    onClicked: { root.openUrl(root.site.share.url); root.dismiss() }
+                  }
+                }
+                Text {
+                  width: parent.width
+                  visible: !!(root.site && root.site.share)
+                  text: "Anyone with the URL can reach this site. With APP_DEBUG=true an error page shows your .env."
+                  color: root.dim
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
                 PanelSectionHeader { text: "PHP"; foreground: root.fg; fontFamily: root.uiFont }
                 Text {
                   width: parent.width

@@ -1,0 +1,6 @@
+# Tunnels `covey share` can use. The first row is the one used; to switch tool,
+# add a row and move it to the top. Placeholders: @PORT@ is the site's loopback
+# listener, @PORT2@ a second free port for the tool's own use (PORT + 1000).
+# url_regex finds the public URL in the tool's output (its journal).
+# name	binary	package	args	url_regex
+cloudflared	/usr/bin/cloudflared	cloudflared	tunnel --no-autoupdate --metrics 127.0.0.1:@PORT2@ --url http://127.0.0.1:@PORT@	https://[a-z0-9-]+\.trycloudflare\.com
