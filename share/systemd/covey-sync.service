@@ -1,4 +1,7 @@
 [Unit]
+# Stopped with the stack, so a sync the path watcher already triggered does
+# not carry on after `covey down`.
+PartOf=covey.target
 Description=Covey site config sync
 
 [Service]

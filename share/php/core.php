@@ -114,6 +114,17 @@ function tunnel(): ?array {
 // 41000-41999; @PORT2@ (the tool's own port) is this + 1000.
 function share_port(string $name): int { return 41000 + crc32($name) % 1000; }
 
+// How a shared site is served: "app" pins the docroot to public/, "static"
+// serves the directory itself. Decided from things a checkout does not
+// briefly remove - a public/ directory, composer.json, artisan - rather than
+// public/index.php existing at the moment of a sync, which once let a share
+// fall back to publishing the repository root. When in doubt, "app": it fails
+// closed (404), where "static" would fail open.
+function share_kind(string $dir): string {
+    foreach (['public', 'composer.json', 'artisan'] as $f) if (file_exists("$dir/$f")) return 'app';
+    return 'static';
+}
+
 // Sites being shared, from systemd: a share is a running unit, so - as with
 // the stack - there is no marker file to drift from it. name => unit state.
 function shares(): array {
@@ -437,7 +448,7 @@ function platform_checks(bool $live): array {
     if ($up !== null && $post !== null && $post > 0 && $up > $post) {
         $c[] = chk('php-ini', false, ['problem'=>'ini_upload_exceeds_post',
             'detail'=>"upload_max_filesize ({$ini['upload_max_filesize']}) is larger than post_max_size ({$ini['post_max_size']})",
-            'fix'=>fix("covey php set post_max_size {$ini['upload_max_filesize']}")]);
+            'fix'=>fix('covey php set post_max_size ' . escapeshellarg($ini['upload_max_filesize']))]);
     }
 
     // Lines covey refused to apply (a hand edit). Unsetting is safe whatever the
@@ -627,7 +638,7 @@ function site_report(string $name, string $dir, bool $live): array {
                     'detail'=>'cannot reach mysql', 'fix'=>fix('covey services up')])
                 : chk('database', false, ['problem'=>'database_missing',
                     'detail'=>"database '{$cf['database']}' does not exist",
-                    'fix'=>fix("covey db create {$cf['database']}")]));
+                    'fix'=>fix('covey db create ' . escapeshellarg($cf['database']))]));
     }
 
     $ident['checks'] = $checks;
@@ -945,6 +956,11 @@ if ($cmd === 'sites') {
 //   tunnel          -> name \t bin \t pkg \t args \t url_regex
 if ($cmd === 'shares') {
     foreach (shares() as $n => $st) printf("%s\t%d\t%s\n", $n, share_port($n), $st);
+    exit(0);
+}
+if ($cmd === 'share-kind') {
+    $d = sites()[(string)($argv[2] ?? '')] ?? null;
+    echo $d === null ? 'app' : share_kind($d), "\n";
     exit(0);
 }
 if ($cmd === 'share-port') { echo share_port((string)($argv[2] ?? '')), "\n"; exit(0); }

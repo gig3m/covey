@@ -396,8 +396,9 @@ How it fits together:
 - **covey gives a shared site a loopback listener** on `127.0.0.1:41xxx` (the
   port comes from the site name) that serves it whatever `Host` arrives, and
   tells PHP the request is HTTPS so the app builds `https://` links. Because it
-  is public, it is stricter than the local one: dotfiles (`.env`, `.git/`) are
-  refused, and a framework app is served from `public/` only — if
+  is public, it is stricter than the local one: any dot-path (`.env`, `.git/`,
+  `.well-known/`) is refused, and a project with a `public/` directory,
+  `composer.json` or `artisan` is served from `public/` only — if
   `public/index.php` disappears mid-checkout the share returns 404 rather than
   falling back to the project root.
 - **The tunnel is one row of data**, in `share/tunnels.tsv`: the binary, its

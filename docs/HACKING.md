@@ -147,7 +147,18 @@ environment.
 - **`StartLimitBurst` counts manual starts too.** covey-services' limit (meant
   to bound the at-login retry) was hit by five `covey down`/`covey up` cycles,
   leaving the services `failed`. `covey up` runs `reset-failed 'covey-*'` first.
-- **`cmd_sync` takes the site lock itself, and the lock is re-entrant.** Two
+- **Decide a shared site's docroot from stable metadata, and fail closed.**
+  Choosing the shared snippet from `public/index.php` existing at sync time let
+  a sync during a checkout switch a Laravel share to root serving
+  (`storage/logs/laravel.log` public). `share_kind()` looks for `public/`,
+  `composer.json` or `artisan`, and defaults to the pinned (404-on-miss) form.
+- **A sync must not start pools while the stack is down.** One queued on the
+  lock behind `covey down`, or fired by the path watcher, did exactly that.
+  `ensure_php_pool` renders only when `covey.target` is inactive, and
+  covey-sync.service is `PartOf=covey.target`.
+- **`cmd_sync` takes the site lock itself, and the lock is re-entrant.** The
+  "already held" marker is a plain shell variable reset at startup; it was
+  briefly an environment-style name, and an inherited value skipped locking. Two
   bar instances sharing at once (or a share racing the `covey-sync.path`
   watcher) ran two syncs over each other and failed writing a pool config.
   Commands that mutate then sync hold the same lock; `covey share` releases it

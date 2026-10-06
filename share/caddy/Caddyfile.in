@@ -51,18 +51,18 @@
 # sends (xyz.trycloudflare.com). The tunnel terminates TLS.
 #
 # Stricter than the local listener, because this one is public:
-#  - dotfiles (.env, .git/) are refused outright, whatever the docroot;
-#  - a framework app (kind "app") is pinned to public/ with no fallback to the
-#    project root, so if public/index.php vanishes mid-checkout the share fails
-#    closed instead of publishing vendor/, storage/ and the repository.
+#  - any path with a dot-segment (.env, .git/, .well-known/...) is refused.
+#    No .well-known exception: the tunnel terminates TLS, so there is no ACME
+#    to serve, and an exception for the prefix let /.well-known/.env through;
+#  - a framework app is pinned to public/ with no fallback to the project
+#    root. Which snippet a site gets is decided from stable metadata
+#    (share_kind in core.php), not from public/index.php existing at sync
+#    time, so a checkout that briefly removes it fails closed.
 # A handle, not a bare respond: Caddy runs handle blocks before respond, so a
 # bare respond lost to covey_app's catch-all handle and .env was served. Handle
 # blocks with named matchers keep their order, and this one is imported first.
 (covey_private) {
-	@private {
-		path /.* */.*
-		not path /.well-known/*
-	}
+	@private path /.* */.*
 	handle @private {
 		respond 404
 	}

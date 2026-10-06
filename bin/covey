@@ -106,6 +106,10 @@ ensure_php_pool() {
   chmod 644 "$conf"
   echo "COVEY_FPM_BIN=$(fpm_bin "$ver")" > "$COVEY_CONFIG/php/$ver.env"
   systemctl --user add-wants covey.target "covey-fpm@$ver.service" >/dev/null 2>&1 || true
+  # While the stack is down, render only. A sync can arrive after `covey down`
+  # (one queued on the lock behind it, or the path watcher) and must not bring
+  # pools back that the user just stopped.
+  systemctl --user is-active --quiet covey.target || return 0
   if systemctl --user is-active --quiet "covey-fpm@$ver.service"; then
     if [[ $changed -eq 1 ]]; then
       systemctl --user reload "covey-fpm@$ver.service" 2>/dev/null || true
@@ -222,7 +226,7 @@ cmd_sync() {
   local sname sport sstate sdir
   while IFS=$'\t' read -r sname sport sstate; do
     [[ -n "$sname" ]] || continue
-    sdir="$(core_sites | awk -F'\t' -v n="$sname" '$1 == n && $4 == "1" {print $2"\t"$3"\t"$5}')"
+    sdir="$(core_sites | awk -F'\t' -v n="$sname" '$1 == n && $4 == "1" {print $2"\t"$3}')"
     if [[ -z "$sdir" ]]; then
       systemctl --user stop "covey-share@$sname.service" 2>/dev/null || true
       systemctl --user reset-failed "covey-share@$sname.service" 2>/dev/null || true
@@ -230,9 +234,11 @@ cmd_sync() {
     fi
     [[ "$sstate" == "failed" ]] && continue
     local sd stag skind
-    IFS=$'\t' read -r sd stag skind <<< "$sdir"
+    IFS=$'\t' read -r sd stag <<< "$sdir"
+    skind="$(core share-kind "$sname")"
+    [[ "$skind" == "static" ]] || skind="app"
     printf '\nhttp://:%s {\n\timport covey_shared_%s %s %s/covey/php%s.sock\n}\n' \
-      "$sport" "$([[ "$skind" == "app" ]] && echo app || echo static)" "$sd" "$COVEY_RUNTIME" "$stag" >> "$tmp"
+      "$sport" "$skind" "$sd" "$COVEY_RUNTIME" "$stag" >> "$tmp"
   done < <(core shares 2>/dev/null)
 
   if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
@@ -488,21 +494,26 @@ cmd_sites() {
 # quick succession, and two of these racing would interleave rewrites of the
 # disabled list and run sync twice over each other.
 SOLO_FILE="$COVEY_CONFIG/solo"
+_covey_lock_held=0
+export -n _covey_lock_held 2>/dev/null || true
 #
 # Re-entrant within one process (site commands call sync while holding it), and
 # taken by cmd_sync itself: two bar instances sharing at once, or a share racing
 # the covey-sync.path watcher, once ran two syncs over each other's pool config.
+#
+# The marker is a plain shell variable cleared at startup (below), so a value
+# in the environment cannot make a process believe it already holds the lock.
 site_lock() {
-  [[ -n "${COVEY_LOCK_HELD:-}" ]] && return 0
+  [[ "$_covey_lock_held" == 1 ]] && return 0
   mkdir -p "$COVEY_RUNTIME/covey" "$COVEY_CONFIG"
-  exec 9>"$COVEY_RUNTIME/covey/site.lock"
-  flock 9
-  COVEY_LOCK_HELD=1
+  exec 9>"$COVEY_RUNTIME/covey/site.lock" || die "cannot open the covey lock"
+  flock 9 || die "cannot take the covey lock"
+  _covey_lock_held=1
 }
 site_unlock() {
-  [[ -n "${COVEY_LOCK_HELD:-}" ]] || return 0
+  [[ "$_covey_lock_held" == 1 ]] || return 0
   flock -u 9
-  unset COVEY_LOCK_HELD
+  _covey_lock_held=0
 }
 # Replace the disabled list with stdin, atomically.
 write_disabled() {
