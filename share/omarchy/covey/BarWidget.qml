@@ -271,7 +271,9 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: ""
+    // nf-fa-server. Escaped, not literal: a private-use glyph is invisible in
+    // most tool output, and a rewrite once dropped it without anyone noticing.
+    text: "\uf233"
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.tooltip
