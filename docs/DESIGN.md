@@ -184,6 +184,11 @@ The bar module and an agent want the *same thing*: what is broken, why, and the
 command that fixes it. So the work done for the status bar was already the
 agent interface. Nothing was bolted on.
 
+The settings window added later is a fourth renderer, not a second model: it
+draws `covey doctor --json` for whether things are right and `covey status
+--json` for what covey provides (services, PHP providers, settings), and each of
+its buttons runs a `covey` command.
+
 Two constraints fall out of this:
 
 - **Human output must be a rendering of the JSON model**, never a separate code

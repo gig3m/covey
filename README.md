@@ -407,6 +407,30 @@ All checks passed              Full report →
 
 `omarchy-shell covey up` and `... down` do the same thing without a mouse.
 
+### Settings
+
+**Settings →** in the flyout (or `omarchy-shell covey settings`) opens covey's
+settings window, the equivalent of Herd's:
+
+- **Sites** — every site with its switch, URL and path, Open / Terminal /
+  Copy URL / Solo, which PHP it runs and *why* (and which file to edit to change
+  it), and its checks, each failing one with its fix and a Run button.
+- **Services** — MySQL, PostgreSQL, Redis and Mailpit: state, address,
+  credentials, image, memory, the `.env` lines with a Copy button, MySQL's
+  databases, Mailpit's UI, and one start/stop for the lot.
+- **PHP** — each provider's version, pool state, the sites using it and its
+  extensions, with Install / Enable extensions when something is missing.
+- **General** — stack start/stop, start at login, the sites folder, browser
+  trust, the :80/:443 sysctl, and the logs.
+
+Keys: `1`–`4` or `Tab` switch tabs, `↑`/`↓` move through sites, `Esc` closes.
+`omarchy-shell shell summon covey '{"tab":"services"}'` opens a given tab.
+
+The window renders `covey status --json` and `covey doctor --json`, and every
+button runs a `covey` command; anything needing root opens in a terminal so sudo
+can ask. It never edits a project: changing a site's PHP version means editing
+that project's `.covey` or `composer.json`, and the window says which.
+
 It is a **renderer over `covey doctor --json`**, not a second source of truth.
 
 ## Agents

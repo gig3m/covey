@@ -174,6 +174,13 @@ BarWidget {
   }
 
   // Zero-argument, because broadcast() calls its method with no arguments.
+  // The settings pane is this plugin's overlay, owned by the shell's panel
+  // loader rather than by any one bar instance.
+  function openSettings(tab) {
+    Quickshell.execDetached(["omarchy-shell", "shell", "summon", "covey",
+                             JSON.stringify(tab ? { tab: tab } : {})])
+  }
+
   function markActing() {
     root.actedFrom = root.stackState
     root.acting = true
@@ -216,6 +223,7 @@ BarWidget {
     function toggle(): void { root.broadcast("togglePopup") }
     function up(): void { root.setStack(true) }
     function down(): void { root.setStack(false) }
+    function settings(): void { root.openSettings("") }
   }
 
   // Poll faster than the normal interval while an up/down settles, then give up.
@@ -604,23 +612,26 @@ BarWidget {
           font.family: root.uiFont
           font.pixelSize: Style.font.caption
         }
-        Text {
-          id: reportLabel
-          anchors.verticalCenter: parent.verticalCenter
-          anchors.right: parent.right
-          text: "Full report →"
-          color: Color.popups.text
-          font.family: root.uiFont
-          font.pixelSize: Style.font.caption
-        }
+        // The problem count opens the full report; Settings opens the pane.
         MouseArea {
-          anchors.fill: parent
+          anchors.left: parent.left
+          anchors.top: parent.top
+          anchors.bottom: parent.bottom
+          width: parent.width / 2
           cursorShape: Qt.PointingHandCursor
           onClicked: {
             root.close()
             Quickshell.execDetached(
               ["omarchy-launch-floating-terminal-with-presentation", "covey", "doctor"])
           }
+        }
+        LinkText {
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.right: parent.right
+          text: "Settings →"
+          font.family: root.uiFont
+          baseColor: Color.popups.text
+          onActivated: { root.close(); root.openSettings("") }
         }
       }
     }

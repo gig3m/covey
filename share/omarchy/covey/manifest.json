@@ -5,23 +5,39 @@
   "version": "0.1.0",
   "author": "covey",
   "license": "MIT",
-  "description": "Local PHP development environment status: shows when a site's platform requirements are not met.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "description": "Local PHP development environment: bar status with per-site switches, and a settings window for sites, services and PHP.",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "Settings.qml"
+  },
   "barWidget": {
     "displayName": "Covey",
     "description": "Health of the local PHP environment. Turns red when a site's requirements are unmet; click for the full report.",
     "category": "Development",
-    "aliases": ["covey", "php", "laravel", "localhost", "dev"],
+    "aliases": [
+      "covey",
+      "php",
+      "laravel",
+      "localhost",
+      "dev"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": { "refreshIntervalSec": 15 },
+    "defaults": {
+      "refreshIntervalSec": 15
+    },
     "schema": [
       {
         "key": "refreshIntervalSec",
         "type": "integer",
         "label": "Refresh every (seconds)",
-        "min": 5, "max": 300, "step": 5,
+        "min": 5,
+        "max": 300,
+        "step": 5,
         "defaultValue": 15,
         "description": "How often covey doctor is polled. Results are cached, so a short interval is cheap."
       }

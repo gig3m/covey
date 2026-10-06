@@ -167,11 +167,13 @@ breakage is legible. Cheap ways to force one:
     docker compose -f share/compose/covey.yaml stop redis             # service_down
 
 For the bar widget there is no substitute for looking at it. `grim -o <output>`
-captures one monitor (check `hyprctl monitors -j` for names), and
-`omarchy-shell covey toggle` opens the flyout without a mouse. With no
-pointer-synthesis tool installed, exercise a click path by adding a temporary
-`Timer` that calls the same function the click does, restart the shell,
-capture, and remove it.
+captures one monitor (check `hyprctl monitors -j` for names).
+`omarchy-shell covey toggle` opens the flyout without a mouse, and
+`omarchy-shell shell summon covey '{"tab":"php"}'` the settings window (the
+plugin's `overlay` entry, `Settings.qml`). The overlay takes exclusive keyboard
+focus, so `wtype 2` / `wtype -k Escape` drive it. With no pointer-synthesis
+tool installed, exercise a click path by adding a temporary `Timer` that calls
+the same function the click does, restart the shell, capture, and remove it.
 
 ## Deliberately not done
 
