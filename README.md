@@ -349,8 +349,8 @@ It is never written into the project — covey does not touch your files.
 With many projects checked out, the common case is "just this one today":
 
 ```console
-$ covey site solo iris
-covey: only iris is up - https://iris.localhost (covey site restore to end)
+$ covey site solo shop
+covey: only shop is up - https://shop.localhost (covey site restore to end)
 
 $ covey site restore
 covey: solo ended, sites restored
