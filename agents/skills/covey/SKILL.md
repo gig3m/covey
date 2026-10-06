@@ -37,6 +37,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey site up|down <n>   take one site in or out of service
     covey site solo <n>      serve only this site; `covey site restore` undoes it
     covey php [list|install <tag>|configure <tag>]
+    covey php settings|set <key> <value>|unset <key>
     covey services [up|down|status|logs]
     covey db [list|create <name>|drop <name>|shell]
     covey logs [caddy|php]   tail logs
@@ -113,6 +114,23 @@ that ordering. The file lives at `/etc/php/conf.d/covey.ini` (8.5) or
 If a site reports "could not find driver" or PDO errors, this is almost
 certainly the cause: run `covey php configure <tag>` for the version that
 site resolves to.
+
+## php.ini settings
+
+    covey php settings                  # effective values, marking what was changed
+    covey php set memory_limit 1G       # any key PHP knows; typos are rejected
+    covey php unset memory_limit        # back to covey's default
+
+Applies to every FPM pool (served sites), not the `php` CLI. Stored in
+`~/.config/covey/php.ini`; covey's defaults are memory_limit 512M,
+upload_max_filesize 64M, post_max_size 64M, max_execution_time 60,
+max_input_vars 5000. Pools reload gracefully, so this is safe to run while a
+site is in use. `covey status --json` carries `.php_ini[]` as
+`{key, value, default, custom}`.
+
+If an upload "disappears" (empty `$_FILES`, no error), check
+`upload_max_filesize` vs `post_max_size` - doctor reports
+`ini_upload_exceeds_post` when the first is larger.
 
 ## Services
 

@@ -7,6 +7,12 @@ Type=simple
 RuntimeDirectory=covey
 RuntimeDirectoryPreserve=yes
 ExecStart=%h/.local/share/covey/bin/covey-fpm-run %i
+# php-fpm re-reads its config on USR2, re-executing in place with the same
+# PID and the listening socket inherited: no window of 502s, and - unlike a
+# restart - nothing that counts toward the unit's start limit. `covey php set`
+# and `covey sync` reload; a restart storm once tripped StartLimitBurst and left
+# every site down until reset-failed.
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=2
 

@@ -65,16 +65,48 @@ site_exists()   { core_sites | cut -f1 | grep -qxF -- "$1"; }
 site_disabled() { [[ -f "$DISABLED_FILE" ]] && grep -qxF "$1" "$DISABLED_FILE"; }
 
 # --- pools ------------------------------------------------------------------
+# A reload (USR2) returns as soon as the signal is sent, before php-fpm has
+# re-read its config. Wait (briefly) until the socket accepts a connection, so
+# a command that changes a pool hands back a pool that works.
+wait_for_pool() {
+  "$(php_bin "$COVEY_DEFAULT_PHP")" -r '
+    for ($i = 0; $i < 50; $i++) {
+      $s = @stream_socket_client("unix://" . $argv[1], $e, $es, 0.1);
+      if ($s) { fclose($s); exit(0); }
+      usleep(100000);
+    }
+    exit(1);' -- "$COVEY_RUNTIME/covey/php$1.sock" \
+    || warn "PHP $(series "$1") pool did not come back within 5s (covey logs php)"
+}
+
 ensure_php_pool() {
   local ver="$1"
   tag_installed "$ver" || { warn "PHP $(series "$ver") not installed (try: covey php install $ver)"; return 1; }
   mkdir -p "$COVEY_CONFIG/php"
+  local conf="$COVEY_CONFIG/php/$ver.conf" tmp k v
+  tmp="$(mktemp)"
   sed -e "s|@RUNTIME@|$COVEY_RUNTIME|g" -e "s|@VER@|$ver|g" \
-      "$COVEY_SRC/share/php/pool.conf.in" > "$COVEY_CONFIG/php/$ver.conf"
+      "$COVEY_SRC/share/php/pool.conf.in" > "$tmp"
+  # php_value, not php_admin_value: an app can still ini_set() over these,
+  # as it could over a real php.ini.
+  while IFS=$'\t' read -r k v; do
+    [[ -n "$k" ]] && printf 'php_value[%s] = %s\n' "$k" "$v" >> "$tmp"
+  done < <(core ini)
+  # A running pool only reads its config at start or reload, so a changed
+  # config means a reload - otherwise `covey php set` would appear to do nothing.
+  local changed=1
+  cmp -s "$tmp" "$conf" && changed=0
+  mv "$tmp" "$conf"
   echo "COVEY_FPM_BIN=$(fpm_bin "$ver")" > "$COVEY_CONFIG/php/$ver.env"
   systemctl --user add-wants covey.target "covey-fpm@$ver.service" >/dev/null 2>&1 || true
-  systemctl --user is-active --quiet "covey-fpm@$ver.service" || \
+  if systemctl --user is-active --quiet "covey-fpm@$ver.service"; then
+    if [[ $changed -eq 1 ]]; then
+      systemctl --user reload "covey-fpm@$ver.service" 2>/dev/null || true
+      wait_for_pool "$ver"
+    fi
+  else
     systemctl --user start "covey-fpm@$ver.service" 2>/dev/null || true
+  fi
 }
 
 render() {
@@ -227,8 +259,68 @@ cmd_php() {
       sudo pacman -S --needed --noconfirm "${pkgs[@]}" || die "install failed"
       ensure_php_pool "$t" && echo "PHP $(series "$t") ready" ;;
     configure) shift; cmd_php_configure "$@" ;;
-    *) die "usage: covey php [list|install <tag>|configure <tag>]" ;;
+    settings|ini) cmd_php_settings ;;
+    set)   shift; cmd_php_set "$@" ;;
+    unset) shift; cmd_php_unset "$@" ;;
+    *) die "usage: covey php [list|install <tag>|configure <tag>|settings|set <key> <value>|unset <key>]" ;;
   esac
+}
+
+# --- php.ini settings ----------------------------------------------------------
+# covey's own file of `key = value` lines, applied to every FPM pool by sync.
+# Defaults live in core.php (PHP_INI_DEFAULTS); this file holds only what the
+# user changed. FPM only: the php CLI (artisan, composer) reads /etc as usual.
+PHP_INI_FILE="$COVEY_CONFIG/php.ini"
+
+cmd_php_settings() {
+  core status --json --no-containers 2>/dev/null | "$(php_bin "$COVEY_DEFAULT_PHP")" -r '
+    $d = json_decode(stream_get_contents(STDIN), true);
+    foreach ($d["php_ini"] ?? [] as $i)
+      printf("%-22s %-10s %s\n", $i["key"], $i["value"],
+             $i["custom"] ? "(set; default " . ($i["default"] ?? "PHP") . ")" : "");'
+  echo "(covey php set <key> <value> to change; applies to served sites, not the php CLI)"
+}
+
+# Re-render every pool a site is using; ensure_php_pool restarts the changed ones.
+apply_php_ini() {
+  local t
+  for t in $(all_tags); do
+    systemctl --user is-active --quiet "covey-fpm@$t.service" && ensure_php_pool "$t"
+  done
+  drop_doctor_cache
+}
+
+cmd_php_set() {
+  local k="${1:-}" v="${2:-}"
+  [[ -n "$k" && $# -eq 2 ]] || die "usage: covey php set <key> <value>   (quote a value with spaces)"
+  [[ "$k" =~ ^[a-z][a-z0-9_.]*$ ]] || die "invalid setting name: $k"
+  [[ -n "$v" && "$v" != *$'\n'* && "$v" != *'"'* && "$v" != *';'* ]] || die "invalid value: $v"
+  # Only keys PHP itself knows: a typo would otherwise be written, rendered,
+  # and silently ignored by FPM.
+  "$(php_bin "$COVEY_DEFAULT_PHP")" -r 'exit(ini_get($argv[1]) === false ? 1 : 0);' -- "$k" \
+    || die "PHP has no setting called $k"
+  site_lock
+  local tmp; tmp="$(mktemp "$COVEY_CONFIG/.php.ini.XXXXXX")"
+  { [[ -f "$PHP_INI_FILE" ]] && grep -vE "^[[:space:]]*${k//./\\.}[[:space:]]*=" "$PHP_INI_FILE" || true
+    printf '%s = %s\n' "$k" "$v"; } > "$tmp"
+  mv "$tmp" "$PHP_INI_FILE"
+  apply_php_ini
+  echo "covey: $k = $v (served sites; pools reloaded)"
+}
+
+cmd_php_unset() {
+  local k="${1:-}"
+  [[ -n "$k" ]] || die "usage: covey php unset <key>"
+  [[ "$k" =~ ^[a-z][a-z0-9_.]*$ ]] || die "invalid setting name: $k"
+  site_lock
+  if [[ ! -f "$PHP_INI_FILE" ]] || ! grep -qE "^[[:space:]]*${k//./\\.}[[:space:]]*=" "$PHP_INI_FILE"; then
+    echo "covey: $k is not set"; return 0
+  fi
+  local tmp; tmp="$(mktemp "$COVEY_CONFIG/.php.ini.XXXXXX")"
+  grep -vE "^[[:space:]]*${k//./\\.}[[:space:]]*=" "$PHP_INI_FILE" > "$tmp" || true
+  mv "$tmp" "$PHP_INI_FILE"
+  apply_php_ini
+  echo "covey: $k back to its default"
 }
 
 # Enable the extension set for a provider. Needs root (writes /etc/php*/conf.d).
@@ -443,6 +535,7 @@ covey - local PHP development environment
   covey site [up|down] <n>   take one site in or out of service
   covey site solo <n>        serve only this site; covey site restore undoes it
   covey php [list|install T|configure T]  PHP providers and extensions
+  covey php settings|set K V|unset K      php.ini values for served sites
   covey services [up|down|status|logs]
   covey db [list|create <n>|drop <n>|shell]
   covey logs [caddy|php]     tail logs

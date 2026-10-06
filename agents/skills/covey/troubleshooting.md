@@ -90,6 +90,7 @@ and a broken one never look alike.
 | `http_failed` | Request to the site failed | `covey logs caddy` |
 | `http_5xx` | Site returned 5xx - usually an application error | `covey logs php` |
 | `database_missing` | `.covey` declares a database that does not exist | `covey db create <name>` |
+| `ini_upload_exceeds_post` | `upload_max_filesize` > `post_max_size`; larger uploads arrive empty | `covey php set post_max_size <size>` |
 | `reserved_name` | A directory in `~/Covey` uses a name covey serves itself (`mail`) and is not served | `hint` only - renaming a project directory is the user's call |
 | `platform_reqs_missing` | The project's own dependencies need an extension that is not loaded | `covey php configure <tag>` if covey manages it; otherwise a `hint` naming the extension |
 

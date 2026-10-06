@@ -110,6 +110,7 @@ covey doctor
 | `covey php list` | Show PHP providers |
 | `covey php install <tag>` | Install a PHP provider |
 | `covey php configure <tag>` | Enable the extension set for a provider |
+| `covey php settings` / `set <key> <value>` / `unset <key>` | php.ini values for served sites |
 | `covey services [up\|down\|status\|logs]` | The MySQL/PostgreSQL/Redis/Mailpit stack |
 | `covey db [list\|create\|drop\|shell]` | Databases |
 | `covey trust` | Trust the local CA (system + browser stores) |
@@ -185,6 +186,38 @@ The single managed file also fixes load order (`igbinary` must precede `redis`).
 Because that list is fixed, it cannot know what a *project* needs. So
 `covey doctor` additionally runs `composer check-platform-reqs` per site and
 reports anything missing.
+
+### php.ini settings
+
+Served sites get covey's defaults, chosen so a fresh local app does not fall
+over on PHP's stock 2M uploads:
+
+| Setting | covey default |
+|---|---|
+| `memory_limit` | 512M |
+| `upload_max_filesize` | 64M |
+| `post_max_size` | 64M |
+| `max_execution_time` | 60 |
+| `max_input_vars` | 5000 |
+
+```console
+$ covey php set memory_limit 1G
+covey: memory_limit = 1G (served sites; pools reloaded)
+$ covey php set date.timezone America/Chicago   # any setting PHP knows
+$ covey php settings                             # what is in effect
+$ covey php unset memory_limit                   # back to covey's default
+```
+
+Changes live in `~/.config/covey/php.ini` and apply to every PHP version's
+pool, rendered as `php_value` so an app can still `ini_set()` over them. Pools
+are **reloaded**, not restarted (php-fpm re-reads its config on `USR2` and keeps
+its socket), so a change never drops a request. Names PHP does not recognise are
+rejected rather than silently ignored, and `covey doctor` flags
+`upload_max_filesize` larger than `post_max_size`, which makes uploads vanish
+without an error.
+
+These reach sites covey serves. The `php` command line (`artisan`, `composer`)
+reads `/etc/php` as usual.
 
 ## Services
 
@@ -418,8 +451,10 @@ settings window, the equivalent of Herd's:
 - **Services** — MySQL, PostgreSQL, Redis and Mailpit: state, address,
   credentials, image, memory, the `.env` lines with a Copy button, MySQL's
   databases, Mailpit's UI, and one start/stop for the lot.
-- **PHP** — each provider's version, pool state, the sites using it and its
-  extensions, with Install / Enable extensions when something is missing.
+- **PHP** — the php.ini settings (edit a value and press Enter; Reset /
+  Remove; add any other setting), then each provider's version, pool state, the
+  sites using it and its extensions, with Install / Enable extensions when
+  something is missing.
 - **General** — stack start/stop, start at login, the sites folder, browser
   trust, the :80/:443 sysctl, and the logs.
 

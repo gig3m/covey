@@ -1,4 +1,4 @@
-; Rendered by `covey install` -- do not edit directly.
+; Rendered by `covey sync` -- do not edit directly.
 ; Source: share/php/pool.conf.in
 [global]
 error_log = @RUNTIME@/covey/php@VER@.log
@@ -12,4 +12,5 @@ pm = ondemand
 pm.max_children = 16
 pm.process_idle_timeout = 60s
 catch_workers_output = yes
-php_admin_value[memory_limit] = 512M
+; php.ini settings are appended below by `covey sync`, from core.php's
+; defaults and ~/.config/covey/php.ini (covey php set).

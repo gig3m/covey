@@ -94,6 +94,43 @@ function service_images(): array {
     return $out;
 }
 
+// ---- php.ini settings --------------------------------------------------------
+// The settings a served site sees, applied to every FPM pool as php_value
+// lines (so an app can still ini_set() over them, as with a real php.ini).
+// These are the ones covey shows and sets by default; `covey php set` accepts
+// any key PHP knows. Values are covey's, not PHP's stock defaults: 2M uploads
+// and 128M of memory are what make a fresh local app fall over.
+const PHP_INI_DEFAULTS = [
+    'memory_limit'        => '512M',
+    'upload_max_filesize' => '64M',
+    'post_max_size'       => '64M',
+    'max_execution_time'  => '60',
+    'max_input_vars'      => '5000',
+];
+
+// The user's choices, from ~/.config/covey/php.ini. Like `disabled`, this is
+// declared intent that nothing else on the machine records, and it lives with
+// covey's config - never in a project, and never in /etc (that needs root).
+function php_ini_custom(): array {
+    global $CONFIG;
+    $f = "$CONFIG/php.ini";
+    $out = [];
+    if (!is_file($f)) return $out;
+    foreach (file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $l) {
+        if (preg_match('/^\s*[;#]/', $l)) continue;
+        if (preg_match('/^\s*([a-z][a-z0-9_.]*)\s*=\s*(.*?)\s*$/', $l, $m)) $out[$m[1]] = $m[2];
+    }
+    return $out;
+}
+// Effective settings: defaults, overridden by the user's file.
+function php_ini(): array { return array_merge(PHP_INI_DEFAULTS, php_ini_custom()); }
+
+// "64M" -> bytes, for comparing sizes. PHP's own shorthand: K, M, G.
+function ini_bytes(string $v): ?int {
+    if (!preg_match('/^\s*(\d+)\s*([KMG]?)\s*$/i', $v, $m)) return null;
+    return (int)$m[1] * ['' => 1, 'K' => 1024, 'M' => 1048576, 'G' => 1073741824][strtoupper($m[2])];
+}
+
 // ---- constraint matching ---------------------------------------------------
 function vnorm(string $v): string {
     $p = array_map('intval', array_pad(explode('.', trim($v)), 3, 0));
@@ -321,6 +358,17 @@ function platform_checks(bool $live): array {
         if (is_dir("$SITES/$n")) $c[] = chk("site-$n", false, ['problem'=>'reserved_name',
             'detail'=>"$SITES/$n is not served: $why",
             'hint'=>"rename the directory; $n.localhost belongs to covey"]);
+    }
+
+    // An upload larger than post_max_size is dropped before PHP sees it: the
+    // request arrives with an empty body and no error. Easy to cause by raising
+    // one setting and not the other, and miserable to debug from the app side.
+    $ini = php_ini();
+    $up = ini_bytes($ini['upload_max_filesize'] ?? ''); $post = ini_bytes($ini['post_max_size'] ?? '');
+    if ($up !== null && $post !== null && $post > 0 && $up > $post) {
+        $c[] = chk('php-ini', false, ['problem'=>'ini_upload_exceeds_post',
+            'detail'=>"upload_max_filesize ({$ini['upload_max_filesize']}) is larger than post_max_size ({$ini['post_max_size']})",
+            'fix'=>fix("covey php set post_max_size {$ini['upload_max_filesize']}")]);
     }
 
     // Browsers read NSS, not the system store; being trusted by curl says nothing.
@@ -592,6 +640,7 @@ function status(bool $containers = true): array {
             'units'=>$units, 'containers'=>$containers ? $cs : null, 'bytes'=>$total,
             'services'=>services_inventory($live, $cs),
             'php'=>php_inventory($live),
+            'php_ini'=>php_ini_inventory(),
             'settings'=>settings_inventory()];
 }
 
@@ -649,6 +698,17 @@ function php_inventory(bool $live): array {
     return $out;
 }
 
+// Every effective setting, marking which the user changed. Keys covey sets by
+// default come first, in their usual order.
+function php_ini_inventory(): array {
+    $custom = php_ini_custom();
+    $out = [];
+    foreach (php_ini() as $k => $v)
+        $out[] = ['key'=>$k, 'value'=>$v, 'default'=>PHP_INI_DEFAULTS[$k] ?? null,
+                  'custom'=>array_key_exists($k, $custom)];
+    return $out;
+}
+
 function settings_inventory(): array {
     global $SITES, $CONFIG, $DEFAULT;
     $en = trim((string)@shell_exec('systemctl --user is-enabled covey.target 2>/dev/null'));
@@ -683,6 +743,10 @@ function render_status(array $d): int {
     foreach ($d['services'] as $s)
         printf("%-10s %-8s %-16s %s\n", $s['name'], $s['up'] ? 'up' : 'down',
                "{$s['host']}:{$s['port']}", $s['url'] ?? ($s['shell'] ?? ''));
+
+    printf("\n%-22s %s\n", 'PHP.INI', 'VALUE');
+    foreach ($d['php_ini'] as $i)
+        printf("%-22s %s%s\n", $i['key'], $i['value'], $i['custom'] ? '  (set)' : '');
 
     printf("\n%-10s %-8s %-8s %s\n", 'PHP', 'VERSION', 'POOL', 'SITES');
     foreach ($d['php'] as $p)
@@ -759,6 +823,12 @@ if ($cmd === 'sites') {
                site_enabled($n) ? 1 : 0,
                is_file("$d/public/index.php") ? 'app' : 'static');
     }
+    exit(0);
+}
+// The effective php.ini settings, for `covey sync` to render into each pool.
+// Emits: key \t value
+if ($cmd === 'ini') {
+    foreach (php_ini() as $k => $v) printf("%s\t%s\n", $k, $v);
     exit(0);
 }
 if ($cmd === 'status') {

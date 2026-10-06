@@ -34,6 +34,9 @@ Item {
   property string selectedSite: ""
   property var queue: []
   property string lastError: ""
+  // True while a text field has focus. Polling pauses so a refresh (which
+  // rebuilds the rows) cannot wipe a value half-typed.
+  property bool editing: false
 
   readonly property string coveyBin: Quickshell.env("HOME") + "/.local/share/covey/bin/covey"
   readonly property string uiFont: Style.font.family
@@ -203,7 +206,7 @@ Item {
   Timer {
     interval: 5000
     repeat: true
-    running: root.opened
+    running: root.opened && !root.editing
     onTriggered: root.refresh()
   }
 
@@ -710,6 +713,112 @@ Item {
                     + "require.php, else the default (" + (root.status && root.status.settings
                       ? root.status.settings.default_php : "") + "). covey reads these files and never "
                     + "writes them: change the project's file, then run covey sync."
+                color: root.dim
+                font.family: root.uiFont
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              PanelSectionHeader { text: "PHP.INI  (served sites, every version)"; foreground: root.fg; fontFamily: root.uiFont }
+
+              // Enter applies a value; Reset returns it to covey's default. Each
+              // change is `covey php set|unset`, which reloads the pools.
+              Repeater {
+                model: root.status && root.status.php_ini ? root.status.php_ini : []
+                Item {
+                  width: phpCol.width
+                  height: iniField.implicitHeight
+                  Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.key
+                    color: root.fg
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.body
+                  }
+                  TextField {
+                    id: iniField
+                    x: Style.space(220)
+                    width: Style.space(160)
+                    text: modelData.value
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.body
+                    foreground: root.fg
+                    onActiveFocusChanged: root.editing = activeFocus
+                    onAccepted: {
+                      if (text.trim() !== "" && text.trim() !== modelData.value)
+                        root.run(["php", "set", modelData.key, text.trim()])
+                      keyCatcher.forceActiveFocus()
+                    }
+                    Keys.onEscapePressed: { text = modelData.value; keyCatcher.forceActiveFocus() }
+                  }
+                  Text {
+                    anchors.left: iniField.right
+                    anchors.leftMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.custom
+                      ? (modelData.default !== null ? "default " + modelData.default : "not a covey default")
+                      : "default"
+                    color: root.dim
+                    font.family: root.uiFont
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                  Button {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: modelData.custom
+                    text: modelData.default !== null ? "Reset" : "Remove"
+                    bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                    onClicked: root.run(["php", "unset", modelData.key])
+                  }
+                }
+              }
+
+              // Any other setting PHP knows; covey rejects names it does not.
+              Item {
+                width: phpCol.width
+                height: newKey.implicitHeight
+                TextField {
+                  id: newKey
+                  width: Style.space(208)
+                  placeholderText: "other setting, e.g. date.timezone"
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  foreground: root.fg
+                  onActiveFocusChanged: root.editing = activeFocus || newVal.activeFocus
+                  onAccepted: newVal.forceActiveFocus()
+                  Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                }
+                TextField {
+                  id: newVal
+                  x: Style.space(220)
+                  width: Style.space(160)
+                  placeholderText: "value"
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.bodySmall
+                  foreground: root.fg
+                  onActiveFocusChanged: root.editing = activeFocus || newKey.activeFocus
+                  onAccepted: addIni.clicked()
+                  Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                }
+                Button {
+                  id: addIni
+                  anchors.left: newVal.right
+                  anchors.leftMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Set"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                  onClicked: {
+                    if (newKey.text.trim() === "" || newVal.text.trim() === "") return
+                    root.run(["php", "set", newKey.text.trim(), newVal.text.trim()])
+                    newKey.text = ""; newVal.text = ""
+                    keyCatcher.forceActiveFocus()
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                text: "These reach sites served by covey. The php command line (artisan, composer) reads /etc/php as usual."
                 color: root.dim
                 font.family: root.uiFont
                 font.pixelSize: Style.font.bodySmall

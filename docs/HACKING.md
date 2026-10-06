@@ -120,6 +120,14 @@ environment.
   **retry** (`Restart=on-failure` + `RestartSec`, bounded by
   `StartLimitBurst`), not an ordering dependency. `Restart=` *is* honoured for
   `Type=oneshot` — verified; only `always`/`on-success` are rejected there.
+- **Reload FPM pools, never restart them.** `covey-fpm@` has
+  `ExecReload=kill -USR2`: php-fpm re-execs in place (same PID) with the
+  listening socket inherited, so there is no 502 window. Restarting instead
+  both drops requests (Type=simple returns before the new master listens) and
+  counts toward the unit's start limit - five quick `covey php set` calls hit
+  `StartLimitBurst`, the pool went `failed`, and every site 502'd until
+  `systemctl --user reset-failed`. `ensure_php_pool` reloads only when the
+  rendered config changed, then waits for the socket to accept.
 - **`covey-sync.path` watches only the top level of `~/Covey`.** New and removed
   sites are caught; edits to a site's `.covey` or `composer.json` are not. Run
   `covey sync`.
