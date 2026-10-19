@@ -126,11 +126,119 @@ render() {
 }
 
 # --- services ---------------------------------------------------------------
-dc() { docker compose -f "$COVEY_COMPOSE" "$@"; }
+# Optional services in the stack, as the COMPOSE_PROFILES line that
+# covey-services.service reads (see enabled_optional in core.php). Every compose
+# call here uses it too, so `ps`, `logs` and `stop` see the same stack the unit runs.
+SERVICES_ENV="$COVEY_CONFIG/services.env"
+# Plain shell, not core.php: the unit's start and stop read it too, and stopping
+# the stack must not depend on PHP working. An unknown name activates nothing.
+profiles() {
+  [[ -f "$SERVICES_ENV" ]] || return 0
+  sed -n 's/^[[:space:]]*COMPOSE_PROFILES[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' "$SERVICES_ENV" \
+    | tail -n 1 | tr ', ' '\n\n' | { grep -xE '[a-z0-9_-]+' || true; } | paste -sd, -
+}
+dc() {
+  local p; p="$(profiles)" || die "cannot read $SERVICES_ENV"
+  COMPOSE_PROFILES="$p" docker compose -f "$COVEY_COMPOSE" "$@"
+}
 docker_ok() { docker info >/dev/null 2>&1; }
+
+write_profiles() {
+  local tmp; tmp="$(mktemp "$COVEY_CONFIG/.services.env.XXXXXX")"
+  { echo "# Written by covey services enable|disable; read by covey-services.service."
+    echo "COMPOSE_PROFILES=$1"; } > "$tmp"
+  mv "$tmp" "$SERVICES_ENV"
+}
+
+# Serializes everything that reads the profiles and acts on them with Compose:
+# enable/disable, and the unit's own start and stop (services-unit below).
+# Separate from site_lock because `covey down` holds that while it waits for
+# the unit to stop, and the unit's stop needs this one.
+services_lock() {
+  mkdir -p "$COVEY_RUNTIME/covey"
+  exec 8>"$COVEY_RUNTIME/covey/services.lock" || die "cannot open the services lock"
+  flock 8 || die "cannot take the services lock"
+}
+services_unlock() { flock -u 8 2>/dev/null || true; }
+
+# Run by covey-services.service; not for direct use. The profiles are read
+# under the lock rather than from an EnvironmentFile, which systemd loads
+# before the command starts - so a change made while a start waited for the
+# lock would otherwise be missed.
+cmd_services_unit() {
+  services_lock
+  case "${1:-}" in
+    start) dc up -d --wait ;;
+    # Every profile, whatever the file says now: stopping must not leave a
+    # container behind because the list changed or could not be read.
+    stop)  docker compose -f "$COVEY_COMPOSE" --profile '*' stop ;;
+    *) die "usage: covey services-unit start|stop" ;;
+  esac
+}
+
+optional_names() { core optional | cut -f1 | xargs; }
+
+# Which services make up the stack. Not up/down for one service - the stack
+# still starts and stops as a whole - but what the whole consists of. A change
+# is applied at once when the services are running, so the stack is always
+# exactly what was asked for.
+cmd_services_compose() {
+  local action="$1" name="${2:-}" cur
+  [[ -n "$name" ]] || die "usage: covey services $action <name>   (optional: $(optional_names))"
+  # The name ends up in an env file the unit reads: a strict grammar first,
+  # then an exact match against the registry.
+  [[ "$name" =~ ^[a-z0-9_-]+$ ]] && core optional | awk -F'\t' -v n="$name" '$1 == n {f = 1} END {exit !f}' \
+    || die "$name is not an optional service (optional: $(optional_names))"
+  site_lock
+  # Never act while the unit is between states: a start that has released the
+  # lock but is not yet "active" would be taken for a stopped stack, and the
+  # new service saved but never started. Wait without holding the lock - the
+  # unit's start and stop need it.
+  local state i
+  for i in $(seq 1 300); do
+    services_lock
+    state="$(systemctl --user is-active covey-services.service 2>/dev/null || true)"
+    [[ "$state" == activating || "$state" == deactivating || "$state" == reloading ]] || break
+    services_unlock
+    sleep 1
+  done
+  [[ "$state" == activating || "$state" == deactivating || "$state" == reloading ]] \
+    && die "covey-services is still $state; try again when it settles"
+  cur="$(profiles)"
+  local running=0
+  [[ "$state" == active ]] && docker_ok && running=1
+  if [[ "$action" == "enable" ]]; then
+    if [[ ",$cur," != *",$name,"* ]]; then
+      write_profiles "${cur:+$cur,}$name"
+    elif [[ $running -eq 0 ]]; then
+      echo "covey: $name is already in the stack"; return 0
+    fi
+    # Also when already enabled: a previous enable may have failed to start it.
+    if [[ $running -eq 1 ]] && ! dc --progress quiet up -d --wait "$name"; then
+      services_unlock; cmd_sync >/dev/null
+      die "$name is in the stack but did not start (covey services logs); run this again to retry"
+    fi
+  else
+    [[ ",$cur," == *",$name,"* ]] || { echo "covey: $name is not in the stack"; return 0; }
+    # Before the profile goes: compose only manages services in active profiles.
+    # A container left behind would keep running, and restart with docker.
+    docker_ok || die "docker is not available, so $name's container cannot be removed; it stays in the stack"
+    dc rm -sf "$name" >/dev/null 2>&1 \
+      || die "could not remove $name's container (covey services logs); it stays in the stack"
+    write_profiles "$(tr ',' '\n' <<< "$cur" | grep -vxF -- "$name" | paste -sd, -)"
+  fi
+  services_unlock
+  cmd_sync >/dev/null
+  if [[ "$action" == "enable" ]]; then
+    echo "covey: $name is part of the stack$([[ $running -eq 1 ]] && echo " and running" || echo " (starts with covey services up)")"
+  else
+    echo "covey: $name is no longer part of the stack (its data volume is kept)"
+  fi
+}
 
 cmd_services() {
   case "${1:-status}" in
+    enable|disable) cmd_services_compose "$@" ;;
     up|start)
       docker_ok || die "docker is not available (is docker.service running?)"
       systemctl --user start covey-services.service ;;
@@ -140,9 +248,10 @@ cmd_services() {
       printf '%-10s %-12s %s\n' SERVICE STATE PORTS
       dc ps --format '{{.Service}}\t{{.State}}\t{{.Ports}}' 2>/dev/null \
         | awk -F'\t' '{printf "%-10s %-12s %s\n", $1, $2, $3}' \
-        || echo "(not started)" ;;
+        || echo "(not started)"
+      core optional | awk -F'\t' '$2 == 0 {printf "%-10s %-12s %s\n", $1, "off", "(covey services enable " $1 ")"}' ;;
     logs) shift; dc logs --tail "${1:-50}" ;;
-    *) die "usage: covey services [up|down|status|logs]" ;;
+    *) die "usage: covey services [up|down|status|logs|enable <name>|disable <name>]" ;;
   esac
 }
 
@@ -219,6 +328,10 @@ cmd_sync() {
     fi
   done < <(core_sites)
   [[ $((n + off)) -eq 0 ]] && printf '\nlocalhost {\n\trespond "covey: no sites in %s"\n}\n' "$COVEY_SITES" >> "$tmp"
+
+  # covey's own hosts that depend on what is in the stack.
+  if [[ ",$(profiles)," == *",s3,"* ]]; then printf '\ns3.localhost {\n\timport covey_s3\n}\n' >> "$tmp"
+  else printf '\ns3.localhost {\n\timport covey_s3_off\n}\n' >> "$tmp"; fi
 
   # Shared sites get a loopback listener for their tunnel. A share whose site
   # is no longer served (taken down, soloed away, deleted) is ended here, so
@@ -733,6 +846,7 @@ covey - local PHP development environment
   covey php [list|install T|configure T]  PHP providers and extensions
   covey php settings|set K V|unset K      php.ini values for served sites
   covey services [up|down|status|logs]
+  covey services enable|disable <n>  add an optional service (s3) to the stack
   covey db [list|create <n>|drop <n>|shell]
   covey logs [caddy|php]     tail logs
 
@@ -759,6 +873,7 @@ case "${1:-}" in
   unshare) shift; cmd_unshare "$@" ;;
   share-exec) shift; cmd_share_exec "$@" ;;
   services) shift; cmd_services "$@" ;;
+  services-unit) shift; cmd_services_unit "$@" ;;
   db)      shift; cmd_db "$@" ;;
   logs)    shift; cmd_logs "$@" ;;
   ""|-h|--help|help) usage ;;

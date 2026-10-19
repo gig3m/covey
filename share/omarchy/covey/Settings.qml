@@ -644,6 +644,9 @@ Item {
                     radius: Style.cornerRadius
                     color: "transparent"
                     borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                    // An optional service left out of the stack: shown, dimmed,
+                    // with the one action that adds it.
+                    opacity: modelData.enabled ? 1 : 0.6
 
                     Column {
                       id: svcCard
@@ -658,7 +661,8 @@ Item {
                           id: svcDot
                           anchors.verticalCenter: parent.verticalCenter
                           width: Style.space(7); height: width; radius: width / 2
-                          color: modelData.up ? Color.accent : (root.stackState === "down" ? root.dim : Color.urgent)
+                          color: modelData.up ? Color.accent
+                            : (root.stackState === "down" || !modelData.enabled ? root.dim : Color.urgent)
                         }
                         Text {
                           id: svcName
@@ -673,7 +677,8 @@ Item {
                         Text {
                           anchors.right: parent.right
                           anchors.verticalCenter: parent.verticalCenter
-                          text: (modelData.up ? "up" : "down") + (modelData.bytes ? "  " + root.mib(modelData.bytes) : "")
+                          text: (!modelData.enabled ? "not in stack" : (modelData.up ? "up" : "down"))
+                            + (modelData.bytes ? "  " + root.mib(modelData.bytes) : "")
                           color: root.dim
                           font.family: root.uiFont
                           font.pixelSize: Style.font.caption
@@ -720,18 +725,29 @@ Item {
                         width: parent.width
                         spacing: Style.space(6)
                         Button {
+                          visible: !modelData.enabled
+                          text: "Add to stack"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                          onClicked: root.run(["services", "enable", modelData.name])
+                        }
+                        Button {
+                          visible: modelData.enabled
                           text: "Copy .env"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
                           onClicked: root.copy(modelData.env.join("\n"))
                         }
                         Button {
-                          visible: !!modelData.url
+                          visible: modelData.enabled && !!modelData.url
                           text: "Open"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
                           onClicked: { root.openUrl(modelData.url); root.dismiss() }
                         }
                         Button {
-                          visible: !!modelData.shell
+                          visible: modelData.enabled && !!modelData.shell
                           text: "Shell"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
                           onClicked: root.inTerminal(modelData.shell)
+                        }
+                        Button {
+                          visible: modelData.optional && modelData.enabled
+                          text: "Remove from stack"; bordered: true; fontFamily: root.uiFont; fontSize: Style.font.caption; foreground: root.fg
+                          onClicked: root.run(["services", "disable", modelData.name])
                         }
                       }
                     }
@@ -741,7 +757,9 @@ Item {
 
               Text {
                 width: parent.width
-                text: "Create a database with: covey db create <name>. covey never creates one on its own."
+                text: "Create a database with: covey db create <name>, and an S3 bucket in the S3 console. "
+                    + "covey never creates either on its own. Optional services join the stack with "
+                    + "covey services enable <name>; the stack still starts and stops as a whole."
                 color: root.dim
                 font.family: root.uiFont
                 font.pixelSize: Style.font.bodySmall

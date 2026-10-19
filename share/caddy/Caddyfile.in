@@ -100,3 +100,29 @@ mail.localhost {
 	tls internal
 	reverse_proxy 127.0.0.1:8025
 }
+
+# The S3 console, for the optional s3 service (covey services enable s3).
+# :9001 serves the S3 API and the console together, so the console's API calls
+# stay same-origin. A browser opening the bare host gets the console; a signed
+# S3 request for / (ListBuckets) - header or presigned URL - passes through.
+# `covey sync` imports one of these two at s3.localhost, by whether s3 is in
+# the stack, so a disabled one says why rather than failing to connect.
+(covey_s3) {
+	tls internal
+	@console {
+		method GET
+		path /
+		header Accept *text/html*
+		not header Authorization *
+		not query X-Amz-Signature=*
+		not query Signature=*
+	}
+	redir @console /rustfs/console/
+	reverse_proxy 127.0.0.1:9001
+}
+(covey_s3_off) {
+	tls internal
+	respond `covey: S3 is not part of the stack
+  add it: covey services enable s3
+` 503
+}

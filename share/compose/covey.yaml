@@ -56,8 +56,31 @@ services:
       MP_MAX_MESSAGES: "5000"
     volumes: ["covey-mailpit:/data"]
 
+  # Optional: part of the stack only after `covey services enable s3`, which
+  # adds the profile to ~/.config/covey/services.env (COMPOSE_PROFILES).
+  # S3 API on :9000; :9001 serves the same API plus the console, which is
+  # what s3.localhost proxies to.
+  s3:
+    image: rustfs/rustfs:latest
+    profiles: [s3]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # S3 API + console
+    environment:
+      RUSTFS_ACCESS_KEY: covey
+      RUSTFS_SECRET_KEY: coveysecret
+      RUSTFS_CONSOLE_ENABLE: "true"
+    volumes: ["covey-s3:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
 volumes:
   covey-mysql:
   covey-postgres:
   covey-redis:
   covey-mailpit:
+  covey-s3:

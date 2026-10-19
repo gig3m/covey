@@ -75,11 +75,41 @@ const SERVICES = [
     'mailpit' => ['label'=>'Mailpit', 'port'=>1025, 'ui_port'=>8025,
         'url'=>'https://mail.localhost',
         'env'=>['MAIL_MAILER=smtp', 'MAIL_HOST=127.0.0.1', 'MAIL_PORT=1025']],
+    // Optional: not part of the stack until `covey services enable s3`.
+    's3' => ['label'=>'S3 (RustFS)', 'port'=>9000, 'ui_port'=>9001, 'optional'=>true,
+        'url'=>'https://s3.localhost',
+        'user'=>'covey', 'password'=>'coveysecret',
+        'env'=>['FILESYSTEM_DISK=s3', 'AWS_ACCESS_KEY_ID=covey', 'AWS_SECRET_ACCESS_KEY=coveysecret',
+                'AWS_DEFAULT_REGION=us-east-1', 'AWS_BUCKET=',
+                'AWS_ENDPOINT=http://127.0.0.1:9000', 'AWS_USE_PATH_STYLE_ENDPOINT=true']],
 ];
 
 // Names covey serves itself. A ~/Covey directory with one of these names would
 // collide with covey's own Caddy block, so it is not served (see doctor).
-const RESERVED_SITES = ['mail' => 'Mailpit is served at mail.localhost'];
+const RESERVED_SITES = ['mail' => 'Mailpit is served at mail.localhost',
+                        's3'   => 'the S3 console is served at s3.localhost'];
+
+// Which optional services are part of the stack. Stack composition, not
+// runtime state: up/down still applies to the stack as a whole. Declared
+// intent, so stored - as COMPOSE_PROFILES=s3,... in services.env, which every
+// compose call covey makes (the unit's start and stop included) reads.
+// Profiles are named after their service.
+function enabled_optional(): array {
+    global $CONFIG;
+    $f = "$CONFIG/services.env";
+    $out = [];
+    foreach (is_file($f) ? file($f, FILE_IGNORE_NEW_LINES) : [] as $l)
+        if (preg_match('/^\s*COMPOSE_PROFILES\s*=\s*"?([^"]*)"?\s*$/', $l, $m))
+            foreach (preg_split('/[\s,]+/', $m[1], -1, PREG_SPLIT_NO_EMPTY) as $p)
+                if (!empty(SERVICES[$p]['optional'])) $out[$p] = true;
+    return array_keys($out);
+}
+// Services that are part of the stack: every required one, plus enabled extras.
+function stack_services(): array {
+    $on = array_flip(enabled_optional());
+    return array_filter(SERVICES, fn($d, $n) => empty($d['optional']) || isset($on[$n]),
+                        ARRAY_FILTER_USE_BOTH);
+}
 
 // service => image, from the compose file. A deliberately small parse: the file
 // is covey's own and keeps `image:` directly under each service.
@@ -483,7 +513,8 @@ function platform_checks(bool $live): array {
         return $c;
     }
     $c[] = chk('docker', OK);
-    foreach (SERVICES as $svc => $def) {
+    // An optional service left out of the stack is a choice, not a failure.
+    foreach (stack_services() as $svc => $def) {
         $port = $def['port'];
         $c[] = port_open('127.0.0.1', $port)
             ? chk($svc, OK, ['detail'=>"127.0.0.1:$port"])
@@ -771,11 +802,13 @@ function services_inventory(bool $live, array $cs): array {
     $images = service_images();
     $mem = [];
     foreach ($cs as $c) if (preg_match('/^covey-(.+)-\d+$/', $c['name'], $m)) $mem[$m[1]] = $c['bytes'];
+    $in = stack_services();
     $out = [];
     foreach (SERVICES as $name => $d) {
         $out[] = array_merge(['name'=>$name, 'label'=>$d['label'],
             'image'=>$images[$name] ?? null,
-            'up'=>$live && port_open('127.0.0.1', $d['port']),
+            'optional'=>!empty($d['optional']), 'enabled'=>isset($in[$name]),
+            'up'=>$live && isset($in[$name]) && port_open('127.0.0.1', $d['port']),
             'host'=>'127.0.0.1', 'port'=>$d['port'],
             'bytes'=>$mem[$name] ?? null,
             'env'=>$d['env']],
@@ -865,8 +898,9 @@ function render_status(array $d): int {
 
     printf("\n%-10s %-8s %-16s %s\n", 'SERVICE', 'STATE', 'ADDRESS', 'OPEN');
     foreach ($d['services'] as $s)
-        printf("%-10s %-8s %-16s %s\n", $s['name'], $s['up'] ? 'up' : 'down',
-               "{$s['host']}:{$s['port']}", $s['url'] ?? ($s['shell'] ?? ''));
+        printf("%-10s %-8s %-16s %s\n", $s['name'], !$s['enabled'] ? 'off' : ($s['up'] ? 'up' : 'down'),
+               "{$s['host']}:{$s['port']}",
+               $s['enabled'] ? ($s['url'] ?? ($s['shell'] ?? '')) : "covey services enable {$s['name']}");
 
     printf("\n%-22s %s\n", 'PHP.INI', 'VALUE');
     foreach ($d['php_ini'] as $i)
@@ -969,6 +1003,13 @@ if ($cmd === 'tunnel') {
     $t = tunnel();
     if (!$t) exit(1);
     echo implode("\t", [$t['name'], $t['bin'], $t['pkg'], $t['args'], $t['url_regex']]), "\n";
+    exit(0);
+}
+
+// Optional services, for bin/covey. Emits: name \t enabled(1|0)
+if ($cmd === 'optional') {
+    $on = array_flip(enabled_optional());
+    foreach (SERVICES as $n => $d) if (!empty($d['optional'])) printf("%s\t%d\n", $n, isset($on[$n]) ? 1 : 0);
     exit(0);
 }
 

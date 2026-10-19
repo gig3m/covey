@@ -41,6 +41,7 @@ user - do not expect covey to fix it, and do not use covey commands to try.
     covey share [<n>]        public URL for a site (cloudflared); no arg lists shares
     covey unshare <n>|--all  end a share
     covey services [up|down|status|logs]
+    covey services enable|disable <name>   optional services (s3) in the stack
     covey db [list|create <name>|drop <name>|shell]
     covey logs [caddy|php]   tail logs
 
@@ -155,6 +156,24 @@ Laravel's default `DB_*` and `REDIS_*` values already match. Mail needs
 Databases are **not** created automatically - creating one is an explicit
 action: `covey db create <name>`.
 
+### Optional services
+
+`s3` (RustFS) is not part of the stack until `covey services enable s3`, and
+`covey services disable s3` takes it out again. This sets what the stack
+contains. It is not per-service up/down: the stack still starts and stops as a
+whole. Enabling or disabling an optional service only changes which services
+the stack contains, so don't do it unless the user asks.
+
+| Service | Host / port | Credentials |
+|---------|-------------|-------------|
+| S3 (RustFS) | API `127.0.0.1:9000`, console <https://s3.localhost> | key `covey`, secret `coveysecret` |
+
+Laravel: `FILESYSTEM_DISK=s3`, `AWS_ENDPOINT=http://127.0.0.1:9000`,
+`AWS_USE_PATH_STYLE_ENDPOINT=true`, those keys, region `us-east-1`, and a
+bucket created in the console (covey never creates one). `covey status --json`
+has the full `.env` lines. A disabled optional service shows as `off`, and
+doctor never reports it as a failure.
+
 ## Per-site up and down
 
 `covey down` stops the whole stack. `covey site down <name>` takes **one** site
@@ -224,8 +243,9 @@ it again. Everything is `PartOf=covey.target`, so one step covers all of it.
 `covey status --json` is also the **inventory**: the questions that are not
 checks. Reach for it instead of reading covey's files:
 
-    .services[]   name, up, host, port, user/password, env (the .env lines),
-                  url (mailpit: https://mail.localhost), shell (mysql)
+    .services[]   name, up, optional, enabled (in the stack), host, port,
+                  user/password, env (the .env lines),
+                  url (mailpit, s3: https://<name>.localhost), shell (mysql)
     .php[]        tag, series, installed, version, pool (running), sites
                   (enabled sites resolving to it), extensions {name: loaded},
                   install (the command, when not installed)
@@ -307,7 +327,7 @@ Everything runs as **user** systemd units grouped under `covey.target`:
       covey-caddy.service     web server (Caddy)
       covey-fpm@<ver>.service PHP-FPM pool, one instance per PHP version
       covey-sync.path         watches ~/Covey, triggers covey-sync.service
-    covey-services.service  docker compose stack (mysql, redis, mailpit)
+    covey-services.service  docker compose stack (mysql, postgres, redis, mailpit, enabled extras)
 
 Running as the user (not `http`) is deliberate: the FPM pool reads `~/Covey`
 with no ACL or permission workarounds.

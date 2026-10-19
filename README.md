@@ -115,6 +115,7 @@ covey doctor
 | `covey php configure <tag>` | Enable the extension set for a provider |
 | `covey php settings` / `set <key> <value>` / `unset <key>` | php.ini values for served sites |
 | `covey services [up\|down\|status\|logs]` | The MySQL/PostgreSQL/Redis/Mailpit stack |
+| `covey services enable\|disable <name>` | Add an optional service (`s3`) to the stack, or take it out |
 | `covey db [list\|create\|drop\|shell]` | Databases |
 | `covey trust` | Trust the local CA (system + browser stores) |
 | `covey logs [caddy\|php]` | Tail logs |
@@ -129,7 +130,7 @@ covey.target
 ├── covey-caddy.service       Caddy on :80/:443
 ├── covey-fpm@<ver>.service   one FPM pool per PHP version, started on demand
 ├── covey-sync.path           watches ~/Covey, regenerates config
-└── covey-services.service    docker compose: mysql, postgres, redis, mailpit
+└── covey-services.service    docker compose: mysql, postgres, redis, mailpit (+ enabled extras)
 ```
 
 Running as your user rather than `http` is deliberate: the FPM pool reads
@@ -245,7 +246,50 @@ Databases are created explicitly with `covey db create <name>` — covey does no
 provision them behind your back.
 
 `mail.localhost` belongs to covey, so a project directory called `~/Covey/mail`
-is not served; `covey doctor` reports it as `reserved_name`.
+is not served; `covey doctor` reports it as `reserved_name`. The same goes for
+`~/Covey/s3`.
+
+### Optional services
+
+Some services are not part of the stack until you add them. Adding one changes
+what the stack *is*, not whether a service is running: the stack still starts
+and stops as a whole.
+
+```console
+$ covey services enable s3
+covey: s3 is part of the stack and running
+$ covey services disable s3
+covey: s3 is no longer part of the stack (its data volume is kept)
+```
+
+| Service | Address | Credentials |
+|---|---|---|
+| S3 ([RustFS](https://rustfs.com)) | API `127.0.0.1:9000`, console <https://s3.localhost> | key `covey`, secret `coveysecret` |
+
+For Laravel's `s3` disk (`composer require league/flysystem-aws-s3-v3`):
+
+```
+FILESYSTEM_DISK=s3
+AWS_ACCESS_KEY_ID=covey
+AWS_SECRET_ACCESS_KEY=coveysecret
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=<bucket>
+AWS_ENDPOINT=http://127.0.0.1:9000
+AWS_USE_PATH_STYLE_ENDPOINT=true
+```
+
+Create the bucket in the console. As with databases, covey does not make one
+for you.
+
+The choice is stored as `COMPOSE_PROFILES=s3` in `~/.config/covey/services.env`.
+`covey-services.service` starts and stops the stack through covey, which reads
+that file under the same lock `enable` and `disable` take, so the unit and covey
+always agree on what the stack contains. Enabling while the services are running
+starts the new service right away; if it fails to start, the command fails, and
+running it again retries. Disabling stops and removes its container, and leaves
+the service in the stack if that fails. `s3.localhost`
+belongs to covey whether S3 is enabled or not. While it is disabled, the page
+says how to enable it.
 
 `covey status` lists the same table with live state, and `covey status --json`
 carries each service's address, credentials and the exact `.env` lines — the

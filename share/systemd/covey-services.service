@@ -1,5 +1,5 @@
 [Unit]
-Description=Covey services (MySQL, Redis, Mailpit)
+Description=Covey services (MySQL, PostgreSQL, Redis, Mailpit, optional extras)
 PartOf=covey.target
 After=network.target
 # A pull needs DNS, which may not be up yet when this starts at login.
@@ -11,8 +11,10 @@ StartLimitBurst=5
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml up -d --wait
-ExecStop=/usr/bin/docker compose -f %h/.local/share/covey/share/compose/covey.yaml stop
+# Through covey, which reads the optional services in the stack
+# (~/.config/covey/services.env) under the lock `covey services enable` takes.
+ExecStart=%h/.local/share/covey/bin/covey services-unit start
+ExecStop=%h/.local/share/covey/bin/covey services-unit stop
 TimeoutStartSec=300
 Restart=on-failure
 RestartSec=10
