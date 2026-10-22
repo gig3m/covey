@@ -233,12 +233,12 @@ reads `/etc/php` as usual.
 
 MySQL (MariaDB), PostgreSQL, Redis and Mailpit run as one Docker Compose stack,
 bound to loopback only. Credentials are chosen so a **stock Laravel `.env` works
-unchanged**:
+unchanged** (PostgreSQL needs `DB_PORT=5433`; 5432 is left for Supabase):
 
 | Service | Address | Credentials |
 |---|---|---|
 | MySQL | `127.0.0.1:3306` | `root`, empty password |
-| PostgreSQL | `127.0.0.1:5432` | `root`, empty password (trust auth) |
+| PostgreSQL | `127.0.0.1:5433` | `root`, empty password (trust auth) |
 | Redis | `127.0.0.1:6379` | none |
 | Mailpit | SMTP `127.0.0.1:1025`, UI <https://mail.localhost> | none |
 
@@ -320,7 +320,7 @@ covey-mailpit-1              21 MiB
 
 SERVICE    STATE    ADDRESS          OPEN
 mysql      up       127.0.0.1:3306   covey db shell
-postgres   up       127.0.0.1:5432
+postgres   up       127.0.0.1:5433
 redis      up       127.0.0.1:6379
 mailpit    up       127.0.0.1:1025   https://mail.localhost
 

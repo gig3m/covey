@@ -614,7 +614,7 @@ Item {
                 Text {
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
-                  text: "Loopback only. Credentials match a stock Laravel .env."
+                  text: "Loopback only. Credentials match a stock Laravel .env (Postgres on 5433)."
                   color: root.dim
                   font.family: root.uiFont
                   font.pixelSize: Style.font.bodySmall

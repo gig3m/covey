@@ -146,7 +146,7 @@ edits:
 | Service | Host / port          | Credentials        |
 |---------|----------------------|--------------------|
 | MySQL   | `127.0.0.1:3306`     | user `root`, empty password |
-| Postgres| `127.0.0.1:5432`     | user `root`, empty password |
+| Postgres| `127.0.0.1:5433`     | user `root`, empty password |
 | Redis   | `127.0.0.1:6379`     | no auth            |
 | Mailpit | SMTP `127.0.0.1:1025`, UI <https://mail.localhost> | none |
 

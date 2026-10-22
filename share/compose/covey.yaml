@@ -1,5 +1,6 @@
 # Covey services. Credentials are chosen so a stock Laravel .env works
-# unchanged: 127.0.0.1, root, empty password, default ports.
+# unchanged: 127.0.0.1, root, empty password, default ports (Postgres excepted:
+# it is on 5433 so it can run beside a Supabase stack on 5432).
 # Everything binds to loopback only.
 name: covey
 
@@ -21,7 +22,8 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
-    ports: ["127.0.0.1:5432:5432"]
+    # 5433, not 5432: the prism Supabase stack (config.toml [db] port) owns 5432 on this machine.
+    ports: ["127.0.0.1:5433:5432"]
     environment:
       # trust auth so Laravel's stock pgsql defaults (root / empty password) work,
       # exactly as the mysql service does. Loopback-only.
