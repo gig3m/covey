@@ -1,29 +1,42 @@
 # covey
 
-**A local PHP development environment for Linux.** Make a directory, get a
-working HTTPS site.
+**Make a directory, get a working HTTPS site — a Linux answer to [Laravel Herd](https://herd.laravel.com/).**
 
 ```console
 $ mkdir ~/Covey/shop
 $ curl https://shop.localhost
 ```
 
-No `park`, no `link`, no per-project config file, no `ddev config`. A directory
-in `~/Covey` is a site. That is the whole interface.
+No `park`, no `link`, no per-project config file. A directory in `~/Covey` is a
+site. That is the whole interface. When a site is broken, `covey doctor` says
+why, and gives the command that fixes it.
 
-covey is a Linux answer to [Laravel Herd](https://herd.laravel.com/) — same
-idea, different machine, and built so that when something *doesn't* work it
-tells you why.
+![A new directory in ~/Covey showing up in covey sites, with its HTTPS URL and the installed PHP versions](docs/screenshot.png)
 
-![A new directory in ~/Covey showing up in covey sites with its own https URL, and the installed PHP versions](docs/screenshot.png)
+> **TODO:** add a short GIF of the omarchy-shell flyout and the settings window
+> next to this terminal shot. The QML UI was not captured for this change.
 
 ---
 
+## Features
+
+- A directory in `~/Covey` is served at `https://<name>.localhost`.
+- Local HTTPS that browsers actually trust (`covey trust` installs the CA into the system store and the NSS store Chrome and Firefox read).
+- `*.localhost` is resolved by `systemd-resolved`. There is no dnsmasq and no `/etc/hosts` rewrite.
+- PHP version per site, from `.covey`, then `composer.json` `require.php`, then the default. PHP 8.5 and 8.3 from Arch packages, side by side.
+- One shared MariaDB, PostgreSQL, Redis, and Mailpit, on loopback, with credentials a stock Laravel `.env` already has. PostgreSQL listens on `5433` so it can sit beside Supabase. Optional S3 via [RustFS](https://rustfs.com).
+- `covey doctor` checks the platform and every site. Each failure has a stable cause and, when something can fix it, the command.
+- Take one site down, or serve only one (`covey site solo`), without the doctor staying red for a project you are not working on.
+- Put a site on a public URL with `covey share` (cloudflared quick tunnels; no account).
+- Optional [omarchy-shell](https://omarchy.org/) status bar and settings window, written in QML. The window is a renderer over `covey doctor` and `covey status`.
+- Runs as your user. No root daemons. covey does not modify files inside a project.
+
 ## Contents
 
-- [Why](#why)
 - [Requirements](#requirements)
 - [Install](#install)
+- [Quick start](#quick-start)
+- [Comparison](#comparison)
 - [Commands](#commands)
 - [How it works](#how-it-works)
 - [PHP versions](#php-versions)
@@ -36,65 +49,157 @@ tells you why.
 - [Status bar](#status-bar)
 - [Agents](#agents)
 - [Scope](#scope)
+- [Uninstall](#uninstall)
 - [Contributing](#contributing)
 - [License](#license)
 
 ---
 
-## Why
-
-Herd is macOS and Windows only. On Linux the usual options each cost something:
-Valet Linux Plus wants to own nginx and dnsmasq (which fights `systemd-resolved`
-and Tailscale), and DDEV asks for a config step and a container set per project.
-
-covey keeps the property that makes Herd pleasant — **a directory is a site** —
-and adds the thing local environments are usually worst at: **saying why a site
-is broken.** Every failure `covey doctor` reports carries a machine-readable
-cause and the command that fixes it.
-
-It also deliberately does *not* invent a DNS layer. `systemd-resolved` already
-resolves every `*.localhost` name to loopback, so covey has no `dnsmasq`, no
-`/etc/hosts` edits, and nothing to break when your network changes.
-
 ## Requirements
 
-- An Arch-based Linux system (`pacman`)
-- A systemd **user** session — everything runs as you, no root daemons
-- `systemd-resolved` (for `*.localhost` resolution)
-- Docker, for the optional MySQL/PostgreSQL/Redis/Mailpit stack
-- `omarchy-shell`, for the optional status-bar widget
-- `cloudflared`, for the optional `covey share`
+Supported today: **Arch Linux and Arch derivatives that install `caddy`, `php`, `php-fpm`, and `php-legacy` from the Arch `extra` repository.** That includes EndeavourOS, Manjaro, CachyOS, and [Omarchy](https://omarchy.org/). The CLI shells out to `pacman`, and `share/providers.tsv` names those packages and their paths (`/usr/bin/php`, `/etc/php`).
+
+Debian, Ubuntu, Fedora, and NixOS are not supported. A port is a new provider row and a package-manager branch, not a configuration flag.
+
+Also required:
+
+- A systemd **user** session. Everything runs as you. The stack can start at login; it does not run as a system service.
+- `systemd-resolved`, so `*.localhost` resolves to loopback.
+- `nss` (`certutil`), so `covey trust` can put the local CA where Chrome and Firefox will read it.
+- Permission to bind ports 80 and 443 from a user service. The install steps lower `net.ipv4.ip_unprivileged_port_start` once.
+
+Optional, and detected rather than assumed:
+
+| Piece | Used for |
+|---|---|
+| Docker and the Compose plugin | MariaDB, PostgreSQL, Redis, Mailpit, optional S3 |
+| `composer` | `composer check-platform-reqs` inside `covey doctor` |
+| `cloudflared` | `covey share` |
+| `omarchy-shell` | Status bar and settings window |
+
+The AUR package depends on `caddy`, `php`, `php-fpm`, and `nss`. Everything in the table is an optional dependency.
 
 ## Install
+
+### AUR
+
+The package name is `covey`.
+
+```bash
+yay -S covey
+# paru -S covey
+```
+
+That puts the program in `/usr/bin/covey` and the rest of the tree in
+`/usr/share/covey`. `php` and `php-fpm` are dependencies, so
+`covey php install 85` is a no-op afterwards. The package does not start
+the stack. Continue with [Finish setup](#finish-setup).
+
+### Manual
+
+Use this to hack on covey. `covey install` points `~/.local/share/covey` at
+the checkout, so edits apply immediately and moving the checkout breaks the
+running environment.
 
 ```bash
 git clone https://github.com/gig3m/covey.git ~/Projects/covey
 ln -s ~/Projects/covey/bin/covey ~/.local/bin/covey
-
-covey php install 85     # PHP + PHP-FPM
-covey install            # config, systemd units, agent skill
+covey php install 85     # php and php-fpm from pacman
 ```
 
-User services cannot bind ports below 1024 by default. Lower the floor once:
+### Finish setup
+
+User services cannot bind ports below 1024 until the floor is lowered. Once:
 
 ```bash
 echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-covey.conf
 sudo sysctl --system
 ```
 
-Then enable the extension set, trust the local CA, and start:
+Leave the distro `caddy.service` disabled. covey runs its own user unit, and the two of them want the same ports.
+
+Arch enables almost no PHP extensions. `covey php configure` installs the ones a Laravel app needs and writes a single managed `conf.d/covey.ini`. Then trust the local CA and start:
 
 ```bash
-covey php configure 85   # Arch enables almost no PHP extensions by default
-covey trust              # local CA into the system *and* browser stores
+covey install            # config, user units, agent skill
+covey php configure 85
+covey trust              # system store and the browser (NSS) store
 covey up
 ```
+
+For the database stack:
+
+```bash
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"   # then log in again
+```
+
+`covey up` warns and still serves sites when Docker is absent. MariaDB, PostgreSQL, Redis, and Mailpit stay down until it is available.
 
 Verify:
 
 ```bash
 covey doctor
 ```
+
+Restart the browser after `covey trust`. Chrome and Firefox read the NSS store at startup.
+
+## Quick start
+
+```bash
+mkdir ~/Covey/hello
+printf '<?php echo "hello from covey\n";\n' > ~/Covey/hello/index.php
+curl https://hello.localhost
+```
+
+`covey sync` runs when `~/Covey` changes, so the directory is the only step.
+A project with `public/index.php` is served from `public/`; anything else is
+served from the directory itself.
+
+A new Laravel app defaults to SQLite, which `covey php configure` has enabled:
+
+```bash
+composer create-project laravel/laravel ~/Covey/shop
+curl -I https://shop.localhost
+```
+
+MySQL matches a stock `.env` (`127.0.0.1`, user `root`, empty password, port
+`3306`). Create the database yourself — covey will not do it for you:
+
+```bash
+covey db create shop
+```
+
+PostgreSQL is the same credentials on port **5433**.
+
+## Comparison
+
+covey is aimed at one property Herd made pleasant: a directory is a site, and
+you find out why it isn't. The other tools below are better at other jobs.
+
+| | covey | [Herd](https://herd.laravel.com/) | [Valet](https://laravel.com/docs/valet) | [Lando](https://lando.dev/) |
+|---|---|---|---|---|
+| Where it runs | Arch-based Linux | macOS, Windows | macOS; Linux ports exist | macOS, Windows, Linux |
+| A site appears when | you `mkdir` in `~/Covey` | a directory is parked | you `park` or `link` | you init and start that app |
+| Names | `*.localhost`, via systemd-resolved | `*.test`, via dnsmasq | `*.test`, via dnsmasq | its own proxy hostnames |
+| PHP | Arch packages, shared FPM pools | bundled binaries | Homebrew or distro PHP | a container per app |
+| Databases | one shared Compose stack, loopback only | Herd Pro | bring your own | declared per app |
+| Files in the project | none, unless you pin a version in `.covey` | none for the basic case | none for the basic case | a recipe |
+
+Herd is the more finished product on the systems it supports: a real GUI, and
+PHP builds that never touch the system interpreter. covey is for the machine
+Herd does not ship on. The `php` on your `PATH` is the PHP that serves the site.
+
+Valet is the idea this is descended from. Valet Linux Plus is the closest
+Linux port, and a good fit if you want `park` / `link` and `.test`. It takes
+ownership of nginx and dnsmasq, which fights `systemd-resolved` and Tailscale
+MagicDNS. covey leaves DNS alone and serves `*.localhost` instead.
+
+Lando is the right tool when each project needs its own stack and a file that
+describes it. That travels between machines. [DDEV](https://ddev.com/) makes
+the same trade (a config step, containers per project) and is equally serious
+about it. covey keeps one shared stack and does not write a config file into
+your repository.
 
 ## Commands
 
@@ -121,6 +226,10 @@ covey doctor
 | `covey logs [caddy\|php]` | Tail logs |
 
 ## How it works
+
+`systemd-resolved` already resolves every `*.localhost` name to loopback.
+covey does not run dnsmasq and does not edit `/etc/hosts`, so a network
+change has nothing of its own to repair.
 
 Everything is a **user** systemd unit under one target, so the environment
 starts, stops, and reports as a single thing:
@@ -595,28 +704,83 @@ databases on request, and checks for all of the above.
 If `covey doctor` passes and your app still misbehaves, it is app-level — and
 covey will tell you that rather than pretend otherwise.
 
+## Uninstall
+
+There is no `covey uninstall` command. The steps below remove what covey
+wrote. They do not remove `~/Covey`. That directory is your projects.
+
+Stop the stack first, while the program is still on disk:
+
+```bash
+covey unshare --all
+covey autostart off
+covey down
+```
+
+Drop the database containers and their volumes if you used them and want
+the data gone. Skip this when Docker was never set up. Do it before
+removing the package or the checkout; the Compose file lives in the covey
+tree.
+
+```bash
+docker compose -f ~/.local/share/covey/share/compose/covey.yaml --profile '*' down -v
+```
+
+Remove the user units and covey's own config:
+
+```bash
+systemctl --user disable --now covey.target 2>/dev/null || true
+rm -f ~/.config/systemd/user/covey.target \
+      ~/.config/systemd/user/covey-caddy.service \
+      ~/.config/systemd/user/covey-fpm@.service \
+      ~/.config/systemd/user/covey-share@.service \
+      ~/.config/systemd/user/covey-sync.service \
+      ~/.config/systemd/user/covey-sync.path \
+      ~/.config/systemd/user/covey-services.service \
+      ~/.claude/skills/covey \
+      ~/.config/omarchy/plugins/covey \
+      ~/.local/share/covey
+rm -rf ~/.config/systemd/user/covey.target.wants \
+       ~/.config/systemd/user/default.target.wants/covey.target
+systemctl --user daemon-reload
+rm -rf ~/.config/covey
+```
+
+`~/.local/share/covey` is a symlink, either to a git checkout or to
+`/usr/share/covey`. Removing the symlink does not remove a checkout you
+cloned yourself. A manual install also has `~/.local/bin/covey`; remove
+that symlink too.
+
+Root-owned leftovers, only if you want them gone:
+
+```bash
+sudo rm -f /etc/sysctl.d/99-covey.conf /etc/php/conf.d/covey.ini /etc/php-legacy/conf.d/covey.ini
+sudo sysctl --system
+sudo caddy untrust
+certutil -d "sql:$HOME/.pki/nssdb" -D -n "Caddy Local Authority - 2026 ECC Root"
+```
+
+The NSS nickname includes the year Caddy used when it minted the CA. If
+`-D` says the nickname is missing, `certutil -d "sql:$HOME/.pki/nssdb" -L`
+lists the one to delete. `caddy untrust` removes it from the system store.
+
+Then remove the program:
+
+```bash
+sudo pacman -Rns covey          # AUR install
+rm -rf ~/Projects/covey         # manual install, once nothing points at it
+```
+
+`pacman -Rns` removes dependencies nothing else needs, including `php` and
+`caddy` if covey was the only reason they were installed.
+
 ## Contributing
 
-Issues and pull requests welcome.
-
-- `bin/covey` — the CLI (bash)
-- `share/php/core.php` — provider registry, version resolution, check model
-- `share/providers.tsv`, `share/extensions.txt` — the data both sides read
-- `share/systemd/`, `share/caddy/`, `share/compose/` — unit and config templates
-- `share/omarchy/covey/` — the bar widget
-- `agents/skills/covey/` — the agent skill
-
-Resolution and checks live in `core.php` specifically so the CLI and the doctor
-cannot drift into two different views of the same site. Keep it that way.
-
-Two documents worth reading before changing anything:
-
-- [`docs/HACKING.md`](docs/HACKING.md) — the scope charter, architecture invariants, and
-  the hard-won facts (why wildcard `*.localhost` certs cannot work, why
-  `caddy trust` is not enough, why Arch's PHP has no `pdo_mysql`).
-- [`docs/DESIGN.md`](docs/DESIGN.md) — why covey is shaped this way, and which
-  alternatives were rejected and at what cost.
+Issues and pull requests are welcome. The layout, the checks to run, and
+the two invariants that matter are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Read [docs/HACKING.md](docs/HACKING.md) before changing behaviour, and
+[docs/DESIGN.md](docs/DESIGN.md) before proposing a different shape.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Kyle Arrington.
