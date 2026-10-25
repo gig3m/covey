@@ -77,35 +77,27 @@ Optional, and detected rather than assumed:
 | `cloudflared` | `covey share` |
 | `omarchy-shell` | Status bar and settings window |
 
-The AUR package depends on `caddy`, `php`, `php-fpm`, and `nss`. Everything in the table is an optional dependency.
-
 ## Install
 
-### AUR
+### From a checkout
 
-The package name is `covey`.
-
-```bash
-yay -S covey
-# paru -S covey
-```
-
-That puts the program in `/usr/bin/covey` and the rest of the tree in
-`/usr/share/covey`. `php` and `php-fpm` are dependencies, so
-`covey php install 85` is a no-op afterwards. The package does not start
-the stack. Continue with [Finish setup](#finish-setup).
-
-### Manual
-
-Use this to hack on covey. `covey install` points `~/.local/share/covey` at
-the checkout, so edits apply immediately and moving the checkout breaks the
-running environment.
+This is the way to install covey today. `covey install` points
+`~/.local/share/covey` at the checkout, so edits apply immediately and
+moving the checkout breaks the running environment.
 
 ```bash
 git clone https://github.com/gig3m/covey.git ~/Projects/covey
 ln -s ~/Projects/covey/bin/covey ~/.local/bin/covey
 covey php install 85     # php and php-fpm from pacman
 ```
+
+### AUR (not yet)
+
+covey is not on the AUR. The AUR has paused new account registration, so
+the package cannot be submitted until it reopens. The PKGBUILD is ready in
+[`packaging/aur/`](packaging/aur/). When it is published it will depend on
+`caddy`, `php`, `php-fpm`, and `nss`, with everything in the table above as
+optional dependencies.
 
 ### Finish setup
 
@@ -746,10 +738,8 @@ systemctl --user daemon-reload
 rm -rf ~/.config/covey
 ```
 
-`~/.local/share/covey` is a symlink, either to a git checkout or to
-`/usr/share/covey`. Removing the symlink does not remove a checkout you
-cloned yourself. A manual install also has `~/.local/bin/covey`; remove
-that symlink too.
+`~/.local/share/covey` is a symlink to your checkout. Removing the symlink
+does not remove the checkout. Remove the `~/.local/bin/covey` symlink too.
 
 Root-owned leftovers, only if you want them gone:
 
@@ -767,12 +757,8 @@ lists the one to delete. `caddy untrust` removes it from the system store.
 Then remove the program:
 
 ```bash
-sudo pacman -Rns covey          # AUR install
-rm -rf ~/Projects/covey         # manual install, once nothing points at it
+rm -rf ~/Projects/covey         # once nothing points at it
 ```
-
-`pacman -Rns` removes dependencies nothing else needs, including `php` and
-`caddy` if covey was the only reason they were installed.
 
 ## Contributing
 

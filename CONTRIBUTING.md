@@ -33,7 +33,7 @@ Two rules that catch most proposals:
 | `share/tunnels.tsv` | Share backends. The first row is the one in use. |
 | `share/omarchy/covey/` | omarchy-shell bar widget and settings window. |
 | `agents/skills/covey/` | Agent skill installed by `covey install`. |
-| `packaging/aur/` | PKGBUILD for the AUR. Release tags only. |
+| `packaging/aur/` | PKGBUILD for the AUR, not yet published. Release tags only. |
 
 ## Verifying
 

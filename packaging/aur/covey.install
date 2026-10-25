@@ -3,8 +3,8 @@ post_install() {
 covey is installed under /usr/share/covey. It does not start itself.
 For your user:
 
-  covey php configure 85
   covey install
+  covey php configure 85
   covey trust
   covey up
 
