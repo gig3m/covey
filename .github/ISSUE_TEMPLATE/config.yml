@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/gig3m/covey/blob/main/CONTRIBUTING.md
+    about: Read this before a change that touches how sites are served.
+  - name: Hacking notes
+    url: https://github.com/gig3m/covey/blob/main/docs/HACKING.md
+    about: Invariants and the bugs that already cost a day.

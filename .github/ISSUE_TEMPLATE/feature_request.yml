@@ -1,0 +1,31 @@
+name: Feature request
+description: Something covey does not do, and should
+title: ""
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        covey manages the platform (serving, TLS, PHP, databases, checks).
+        It does not edit files inside a project. A request that needs a
+        config file written into the app is probably out of scope; say so
+        if you think the boundary is wrong.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task, not the feature. "Share a site with a client" is better than "add ngrok support".
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should covey do?
+    validations:
+      required: false

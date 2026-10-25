@@ -1,0 +1,60 @@
+name: Bug report
+description: covey did something wrong, or a site is broken and doctor is no help
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `covey doctor` is the report. Paste it. If the command itself failed, paste that output instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Output of `covey doctor`. Use `covey doctor --json` when the text form drops a detail. Redact site names and paths if you need to.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: distro
+    attributes:
+      label: Distro
+      placeholder: Arch Linux, Omarchy, EndeavourOS, Manjaro
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How covey is installed
+      placeholder: AUR package, or a git checkout symlinked onto PATH
+    validations:
+      required: true
+  - type: textarea
+    id: php
+    attributes:
+      label: PHP providers
+      description: Output of `covey php list`.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from `covey logs caddy`, `covey logs php`, or `journalctl --user -u covey-services.service`.
+      render: shell
+    validations:
+      required: false

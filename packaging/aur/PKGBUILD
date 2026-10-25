@@ -1,0 +1,87 @@
+# Maintainer: Kyle Arrington <kyle@arrington.co>
+#
+# Release package. makepkg downloads the GitHub tag v$pkgver and installs that
+# tree. It does not build from a git checkout or from master.
+#
+# sha256sums is SKIP until that tag exists. SKIP is for VCS sources whose
+# contents change; a release tarball needs a real checksum, and this file
+# is not ready to publish while it says SKIP. v0.1.0 is an older tag and
+# is the wrong tarball for this pkgver.
+#
+# On Arch, after the v$pkgver tag is on GitHub (pacman-contrib provides
+# updpkgsums; base-devel provides makepkg; namcap is in extra):
+#
+#   git clone ssh://aur@aur.archlinux.org/covey.git aur-covey
+#   cp PKGBUILD covey.install aur-covey/
+#   cd aur-covey
+#   updpkgsums
+#   makepkg -f
+#   namcap PKGBUILD covey-*.pkg.tar.zst
+#   makepkg --printsrcinfo > .SRCINFO
+#   git add PKGBUILD .SRCINFO covey.install
+#   git commit -m "covey $pkgver"
+#   git push origin master
+
+pkgname=covey
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Local PHP development environment where a directory is an HTTPS site'
+arch=('any')
+url='https://github.com/gig3m/covey'
+license=('MIT')
+# php-fpm depends on php. Both are named because covey needs the CLI
+# (/usr/bin/php, for share/php/core.php) and the FPM binary.
+depends=(
+  'caddy'
+  'nss'
+  'php'
+  'php-fpm'
+)
+# Databases, sharing, Composer checks, and the Laravel extension set are
+# real features, and each one is absent until its packages are installed.
+# `covey php configure` installs the extension packages itself; they are
+# listed here so an AUR helper can offer them up front.
+optdepends=(
+  'docker: MySQL, PostgreSQL, Redis, and Mailpit'
+  'docker-compose: Compose plugin (covey runs docker compose)'
+  'sudo: installing PHP packages and trusting the local CA'
+  'composer: per-site platform requirement checks'
+  'curl: waiting for a shared hostname to appear in public DNS'
+  'cloudflared: public URLs with covey share'
+  'php-gd: gd (covey php configure 85)'
+  'php-sqlite: sqlite3 and pdo_sqlite (covey php configure 85)'
+  'php-pgsql: pgsql and pdo_pgsql (covey php configure 85)'
+  'php-sodium: sodium (covey php configure 85)'
+  'php-igbinary: igbinary, loaded before redis (covey php configure 85)'
+  'php-redis: redis (covey php configure 85)'
+  'php-legacy: PHP 8.3 CLI'
+  'php-legacy-fpm: PHP 8.3 FPM'
+  'php-legacy-gd: gd for PHP 8.3'
+  'php-legacy-sqlite: sqlite for PHP 8.3'
+  'php-legacy-pgsql: PostgreSQL for PHP 8.3'
+  'php-legacy-sodium: sodium for PHP 8.3'
+  'php-legacy-igbinary: igbinary for PHP 8.3'
+  'php-legacy-redis: redis for PHP 8.3'
+)
+options=('!debug' '!strip')
+install=covey.install
+source=("$pkgname-$pkgver.tar.gz::https://github.com/gig3m/$pkgname/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  local dest="$pkgdir/usr/share/covey"
+  install -dm755 "$dest" "$pkgdir/usr/bin" "$pkgdir/usr/share/licenses/$pkgname"
+
+  # Whitelist. The release tarball also contains packaging/ and .gitignore,
+  # which are not part of the installed tool. bin/covey finds its data by
+  # resolving its own path, so the tree has to stay beside the script.
+  cp -a bin share agents docs LICENSE README.md CONTRIBUTING.md "$dest/"
+  find "$dest" -type d -exec chmod 755 {} +
+  find "$dest" -type f -exec chmod 644 {} +
+  chmod 755 "$dest/bin/covey" "$dest/bin/covey-fpm-run"
+
+  ln -s ../share/covey/bin/covey "$pkgdir/usr/bin/covey"
+  install -m644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

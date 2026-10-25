@@ -234,8 +234,9 @@ the same function the click does, restart the shell, capture, and remove it.
 - No auto-provisioning of databases (out of charter).
 - No MCP server — a skill plus a JSON CLI is the pattern omarchy uses, and a
   daemon protocol would exceed it.
-- No `covey uninstall`. covey writes to ~8 locations outside the project, three
-  root-owned; there is currently no teardown. This is a known gap.
+- No `covey uninstall` command. Teardown is the manual procedure in the
+  README. It stays a procedure, rather than a command, until someone has
+  run it against a real install and checked it does not take `~/Covey` with it.
 - PHP providers are limited to verified rows in `providers.tsv` (8.5, 8.3).
   AUR has `php74`–`php84` if a project ever needs one; shipping unverified
   binary paths would create exactly the "why isn't it working" problem covey
